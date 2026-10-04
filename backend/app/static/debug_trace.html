@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- Developer-only page (not part of the product UI). Served at GET /debug/trace. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Ingestion trace</title>
+</head>
+<body>
+<h3>News ingestion trace (dev only)</h3>
+<form id="f">
+  Keyword: <input name="keyword" value="RBI repo rate" size="30">
+  GDELT timespan: <input name="timespan" value="1h" size="6">
+  <button>Run</button>
+</form>
+<p>Tickers like <code>INFY.NS</code> use all three sources; other text uses GDELT + Google News.
+Real APIs are called and rows are really written to news_events. GDELT retries can take ~1 minute.</p>
+<pre id="out"></pre>
+<script>
+document.getElementById("f").onsubmit = async (e) => {
+  e.preventDefault();
+  const out = document.getElementById("out");
+  const params = new URLSearchParams(new FormData(e.target));
+  out.textContent = "Running... (started " + new Date().toLocaleTimeString() + ")";
+  try {
+    const r = await fetch("/debug/trace/run?" + params, { method: "POST" });
+    out.textContent = "HTTP " + r.status + "\n\n" + await r.text();
+  } catch (err) {
+    out.textContent = "Request failed: " + err;
+  }
+};
+</script>
+</body>
+</html>

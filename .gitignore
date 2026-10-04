@@ -1,0 +1,35 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---- Virtual environments ----
+venv/
+.venv/
+env/
+
+# ---- Secrets ----
+.env
+.env.*
+!.env.example
+
+# ---- Local data ----
+chroma_data/
+*.sqlite3
+*.db
+uploads/
+
+# ---- Frontend (added later) ----
+node_modules/
+dist/
+
+# ---- Editors / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
