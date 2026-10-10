@@ -36,18 +36,37 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/investment_copilot"
 
     # --- LLM provider ("gemini" or "openai") ---
+    # Every service accepts one key (X_API_KEY) and/or a comma-separated list (X_API_KEYS).
+    # Keys are tried in order: when one is rate-limited, out of quota, invalid or times out,
+    # the next one is used (app/services/key_pool.py).
     LLM_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str = ""
+    GEMINI_API_KEYS: str = ""
     OPENAI_API_KEY: str = ""
-    # Model names change often; override in .env if a default is retired.
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    OPENAI_API_KEYS: str = ""
+    # When every key of LLM_PROVIDER fails, try the other provider's keys too.
+    LLM_CROSS_PROVIDER_FALLBACK: bool = True
+    # Model names change often; override in .env if a default is retired. Comma-separated =
+    # fallback models, tried in order when a model is overloaded (503) or times out.
+    GEMINI_MODEL: str = "gemini-3.5-flash,gemini-3.8-flash,gemini-3.1-flash-lite"
+    # Gemini 3 "thinking" effort (minimal/low/medium/high; empty = model default). Thinking tokens
+    # count against the output limit, so GEMINI_THINKING_TOKENS is added on top of max_tokens.
+    GEMINI_THINKING_LEVEL: str = "low"
+    GEMINI_THINKING_TOKENS: int = 1024
     OPENAI_MODEL: str = "gpt-4o-mini"
     LLM_TIMEOUT_SECONDS: float = 20.0
     LLM_MAX_CONCURRENT_CALLS: int = 2   # free tiers allow only a few requests per minute
 
     # --- External data sources ---
     MARKETAUX_API_KEY: str = ""
+    MARKETAUX_API_KEYS: str = ""
     ALPHAVANTAGE_API_KEY: str = ""
+    ALPHAVANTAGE_API_KEYS: str = ""
+
+    # --- Supabase project (the backend uses its Postgres through DATABASE_URL; kept for later use) ---
+    SUPABASE_URL: str = ""
+    SUPABASE_PUBLISHABLE_KEY: str = ""
+    SUPABASE_SECRET_KEY: str = ""
 
     # --- Zerodha Kite Connect ---
     ZERODHA_API_KEY: str = ""
@@ -57,6 +76,8 @@ class Settings(BaseSettings):
     CHROMA_PERSIST_DIR: str = str(ENV_FILE.parent / "chroma_data")  # backend/chroma_data (git-ignored)
     CHROMA_COLLECTION: str = "financial_news"
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+    # Load the embedding model in the background at startup (a cold load takes ~40-60 s).
+    EMBEDDING_WARMUP: bool = True
 
     # --- Background jobs (app/core/scheduler.py) ---
     SCHEDULER_ENABLED: bool = True
@@ -89,6 +110,16 @@ class Settings(BaseSettings):
     @property
     def is_development(self) -> bool:
         return self.ENVIRONMENT.lower() == "development"
+
+    def api_keys(self, service: str) -> list[str]:
+        """
+        Ordered, de-duplicated keys for `service` ("gemini", "openai", "marketaux", "alphavantage"):
+        {SERVICE}_API_KEY first, then {SERVICE}_API_KEYS. Read on every call, so tests and
+        .env edits (after a restart) are picked up.
+        """
+        name = service.upper()
+        raw = [getattr(self, f"{name}_API_KEY", "")] + getattr(self, f"{name}_API_KEYS", "").split(",")
+        return list(dict.fromkeys(key.strip() for key in raw if key.strip()))
 
 
 @lru_cache

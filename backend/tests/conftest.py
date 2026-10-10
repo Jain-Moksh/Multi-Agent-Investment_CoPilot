@@ -15,14 +15,27 @@ Without it, those tests are skipped.
 import os
 from collections.abc import AsyncIterator
 
-import pytest
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
+# Tests must never use the real keys / database from backend/.env (no real API calls, no
+# quota used, never touch Supabase). Real environment variables beat .env values, so blank
+# them here, before app.core.config is imported. Tests that need a key set a fake one.
+for _service in ("GEMINI", "OPENAI", "MARKETAUX", "ALPHAVANTAGE"):
+    os.environ[f"{_service}_API_KEY"] = ""
+    os.environ[f"{_service}_API_KEYS"] = ""
+for _name in ("ZERODHA_API_KEY", "ZERODHA_API_SECRET", "SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY",
+              "SUPABASE_SECRET_KEY"):
+    os.environ[_name] = ""
+os.environ["DATABASE_URL"] = "postgresql+asyncpg://postgres:postgres@localhost:5432/not_used_by_tests"
+os.environ["LLM_PROVIDER"] = "gemini"
 
-from app.core.database import get_db
-from app.main import app
-from app.models import Base, BrokerConnection, PortfolioHolding, RefreshToken, Transaction, User
+import pytest  # noqa: E402
+from httpx import ASGITransport, AsyncClient  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine  # noqa: E402
+from sqlalchemy.pool import StaticPool  # noqa: E402
+
+from app.core.database import get_db, get_session_factory  # noqa: E402
+from app.main import app  # noqa: E402
+from app.models import Base, BrokerConnection, PortfolioHolding, RefreshToken, Transaction, User  # noqa: E402
+from app.services import key_pool  # noqa: E402
 
 SQLITE_TABLES = [
     User.__table__,
@@ -31,6 +44,14 @@ SQLITE_TABLES = [
     Transaction.__table__,
     BrokerConnection.__table__,
 ]
+
+
+@pytest.fixture(autouse=True)
+def fresh_key_pool():
+    """Every test starts with no API key marked as rate-limited / invalid."""
+    key_pool.reset()
+    yield
+    key_pool.reset()
 
 
 @pytest.fixture
@@ -66,6 +87,7 @@ async def _client_for(session_factory: async_sessionmaker[AsyncSession]) -> Asyn
             yield session
 
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_session_factory] = lambda: session_factory  # routes that start agents
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
     app.dependency_overrides.clear()

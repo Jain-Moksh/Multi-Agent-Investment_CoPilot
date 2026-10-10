@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.database import AsyncSessionLocal
+from app.core.database import get_session_factory  # shared dependency (tests override it)
 from app.models import NewsEvent
 from app.services import news_ingestion
 
@@ -36,11 +36,6 @@ MAX_ARTICLES_SHOWN = 50  # per source call
 def require_local_request(request: Request) -> None:
     if request.client is None or request.client.host not in LOCAL_HOSTS:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Debug endpoints are only available from localhost")
-
-
-def get_session_factory() -> async_sessionmaker[AsyncSession]:
-    """Separate dependency so tests can point the trace at a test database."""
-    return AsyncSessionLocal
 
 
 router = APIRouter(prefix="/debug", tags=["debug"], dependencies=[Depends(require_local_request)])

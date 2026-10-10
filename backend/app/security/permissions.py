@@ -70,6 +70,12 @@ AGENT_PERMISSIONS: Mapping[str, Mapping[str, frozenset[str]]] = _freeze({
     "fundamental_economic_agent": {"read": ["news_events", "market_snapshots", "company_fundamentals"], "write": []},
     "recommendation_agent": {"read": ["news_events", "market_snapshots", "portfolio_holdings", "user_profiles"],
                              "write": ["recommendations"]},
+    # The AI Assistant (chatbot) can read context for answers but WRITE NOTHING: even a
+    # successful jailbreak of the chat LLM cannot change any data. (Chat history itself is
+    # stored by the API route, not by the assistant.)
+    # company_fundamentals: read-only, to recognise company names ("Infosys" -> INFY.NS) in messages.
+    "assistant": {"read": ["news_events", "portfolio_holdings", "user_profiles", "recommendations",
+                           "company_fundamentals"], "write": []},
 })
 
 

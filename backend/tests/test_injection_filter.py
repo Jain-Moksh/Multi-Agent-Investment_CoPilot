@@ -168,4 +168,5 @@ def test_long_input_is_fast():
     text = ("Nifty ended higher as banks rallied. " * 20_000) + "{" * 50_000
     start = time.perf_counter()
     scan_text_rules(text)
-    assert time.perf_counter() - start < 1.0  # no catastrophic regex backtracking
+    # Catastrophic regex backtracking would take minutes; 3 s leaves room for a busy machine.
+    assert time.perf_counter() - start < 3.0

@@ -37,6 +37,7 @@ from app.core.database import AsyncSessionLocal
 from app.models import NewsEvent, NewsQuarantine, SecurityLog
 from app.models.enums import SecurityEventType, SecurityStatus, Severity
 from app.security.injection_classifier import BLOCKED, SAFE, scan_content
+from app.services import key_pool
 from app.services.http_utils import http_client, safe_get
 
 logger = logging.getLogger(__name__)
@@ -269,7 +270,7 @@ class _DailyBudget:
         today = datetime.now(UTC).date()
         if self.day != today:
             self.day, self.used = today, 0
-        if self.used >= MARKETAUX_DAILY_BUDGET:
+        if self.used >= MARKETAUX_DAILY_BUDGET * max(1, len(settings.api_keys("marketaux"))):  # budget is per key
             return False
         self.used += 1  # counted even if the request then fails: it may still count against the quota
         return True
@@ -303,12 +304,15 @@ async def fetch_marketaux(symbol: str, client: httpx.AsyncClient | None = None) 
     sentiment_score}], where sentiment_score in [-1, 1] is the average of the
     entity scores Marketaux gives for `symbol` within that article.
     """
-    if not settings.MARKETAUX_API_KEY:
-        logger.warning("[marketaux] MARKETAUX_API_KEY not set - skipping %s", symbol)
+    if not settings.api_keys("marketaux"):
+        logger.warning("[marketaux] MARKETAUX_API_KEY(S) not set - skipping %s", symbol)
+        return []
+    if not key_pool.usable_keys("marketaux"):
+        logger.info("[marketaux] every key is resting after a rate-limit / quota error - skipping %s", symbol)
         return []
     if not _marketaux_budget.try_spend():
         logger.warning(
-            "[marketaux] daily budget of %d requests used up - skipping %s until tomorrow (UTC)",
+            "[marketaux] daily budget of %d requests per key used up - skipping %s until tomorrow (UTC)",
             MARKETAUX_DAILY_BUDGET, symbol,
         )
         return []
@@ -317,11 +321,24 @@ async def fetch_marketaux(symbol: str, client: httpx.AsyncClient | None = None) 
         "symbols": symbol,
         "filter_entities": "true",   # only return entities matching `symbols`
         "language": "en",
-        "api_token": settings.MARKETAUX_API_KEY,
     }
+    # Keys in order: 401/403 (bad key), 402 (daily quota) or 429 (rate limit) -> rest it, try the next.
+    response = None
     async with http_client(client) as http:
-        response = await safe_get(http, "marketaux", MARKETAUX_URL, params)
-    if response is None:
+        for key in key_pool.usable_keys("marketaux"):
+            response = await safe_get(http, "marketaux", MARKETAUX_URL, params | {"api_token": key},
+                                      return_error_responses=True)
+            if response is None or response.status_code == 200:
+                break
+            kind = key_pool.classify(response.status_code, response.text[:300])
+            if kind is key_pool.Failure.OTHER:
+                break
+            key_pool.report_failure("marketaux", key, kind, f"HTTP {response.status_code}")
+        else:
+            response = None
+        if response is not None and response.status_code == 200:
+            key_pool.report_success("marketaux", key)
+    if response is None or response.status_code != 200:
         return []
 
     try:

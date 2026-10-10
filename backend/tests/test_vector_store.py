@@ -151,6 +151,26 @@ def test_model_loaded_once_even_with_concurrent_callers(monkeypatch):
     assert constructed == [settings.EMBEDDING_MODEL]
 
 
+# ---------------- startup warm-up ----------------
+
+async def test_warm_up_loads_the_model_once(monkeypatch, caplog):
+    loaded = []
+    monkeypatch.setattr(vs, "_model", None)
+    monkeypatch.setattr(vs, "get_embedding_model", lambda: loaded.append(1) or "model")
+    caplog.set_level("INFO")
+    await vs.warm_up()
+    assert loaded == [1] and "embedding model ready" in caplog.text
+
+
+async def test_warm_up_failure_is_logged_not_raised(monkeypatch, caplog):
+    def broken():
+        raise OSError("no internet to download the model")
+
+    monkeypatch.setattr(vs, "get_embedding_model", broken)
+    await vs.warm_up()  # must not raise
+    assert "warm-up failed" in caplog.text
+
+
 # ---------------- search / remove / persistence ----------------
 
 async def test_search_returns_closest_first_and_filters(pg_sessionmaker, chroma, fake_model):

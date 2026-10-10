@@ -7,6 +7,7 @@ Alembic's env.py imports this package to detect schema changes.
 
 from app.models.base import Base
 from app.models.broker import BrokerConnection
+from app.models.chat import ChatConversation, ChatLog, ChatMessage
 from app.models.logs import AgentLog, SecurityLog
 from app.models.market import CompanyFundamentals, MarketSnapshot, PriceHistory, TechnicalIndicator
 from app.models.news import NewsEvent, NewsQuarantine
@@ -32,4 +33,7 @@ __all__ = [
     "AgentLog",
     "SecurityLog",
     "Recommendation",
+    "ChatConversation",
+    "ChatMessage",
+    "ChatLog",
 ]

@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models import MarketSnapshot, PriceHistory, TechnicalIndicator
+from app.services import key_pool
 from app.services.http_utils import http_client, safe_get
 
 logger = logging.getLogger(__name__)
@@ -193,52 +194,67 @@ def _as_utc(dt: datetime) -> datetime:
 
 
 def alphavantage_available(purpose: str) -> bool:
-    """True if Alpha Vantage may be called now (key set, not in rate-limit cooldown). Shared by all AV callers."""
-    if not settings.ALPHAVANTAGE_API_KEY:
-        logger.warning("[alphavantage] ALPHAVANTAGE_API_KEY not set - skipping %s", purpose)
+    """
+    True if Alpha Vantage may be called now: a key is set, at least one key is not resting
+    after a rate limit, and we are not in the all-keys cooldown. Shared by all AV callers.
+    """
+    if not settings.api_keys("alphavantage"):
+        logger.warning("[alphavantage] ALPHAVANTAGE_API_KEY(S) not set - skipping %s", purpose)
         return False
     if _alphavantage_blocked_until and datetime.now(UTC) < _alphavantage_blocked_until:
         logger.info("[alphavantage] in rate-limit cooldown - skipping %s", purpose)
+        return False
+    if not key_pool.usable_keys("alphavantage"):
+        logger.info("[alphavantage] every key is resting after a rate limit - skipping %s", purpose)
         return False
     return True
 
 
 def start_alphavantage_cooldown(message: str) -> None:
+    """Called when EVERY key hit its rate limit: pause all Alpha Vantage calls for a while."""
     global _alphavantage_blocked_until
     _alphavantage_blocked_until = datetime.now(UTC) + ALPHAVANTAGE_COOLDOWN
     logger.warning(
-        "[alphavantage] rate limit reached; pausing calls until %s. API said: %s",
+        "[alphavantage] rate limit reached on every key; pausing calls until %s. API said: %s",
         _alphavantage_blocked_until.isoformat(timespec="minutes"), message[:150],
     )
 
 
 async def alphavantage_query(client: httpx.AsyncClient, params: dict[str, Any], label: str) -> dict[str, Any] | None:
     """
-    One Alpha Vantage call (the API key is added here). Returns the JSON body, or None for
-    errors / unknown symbols. Raises AlphaVantageRateLimitError when the quota is exhausted.
+    One Alpha Vantage request (the API key is added here). Keys are tried in order: a key that
+    hits its rate limit is rested (key_pool) and the next key is used. Returns the JSON body, or
+    None for errors / unknown symbols. Raises AlphaVantageRateLimitError when every key is limited.
     """
-    response = await safe_get(client, "alphavantage", ALPHAVANTAGE_URL,
-                              params | {"apikey": settings.ALPHAVANTAGE_API_KEY})
-    if response is None:
-        return None
-    try:
-        payload = response.json()
-    except ValueError:
-        logger.error("[alphavantage] non-JSON response for %s", label)
-        return None
+    rate_limit_message = None
+    for key in key_pool.usable_keys("alphavantage"):
+        response = await safe_get(client, "alphavantage", ALPHAVANTAGE_URL, params | {"apikey": key})
+        if response is None:
+            return None
+        try:
+            payload = response.json()
+        except ValueError:
+            logger.error("[alphavantage] non-JSON response for %s", label)
+            return None
 
-    # Alpha Vantage returns HTTP 200 even for errors; the body tells us what happened.
-    # Rate limits come back as {"Note": ...} (older) or {"Information": ...} (newer).
-    message = payload.get("Note") or payload.get("Information")
-    if message:
-        if "rate limit" in message.lower() or "call frequency" in message.lower():
-            raise AlphaVantageRateLimitError(message)
-        logger.error("[alphavantage] %s: %s", label, message[:200])
-        return None
-    if "Error Message" in payload:
-        logger.error("[alphavantage] %s: %s", label, payload["Error Message"][:200])
-        return None
-    return payload
+        # Alpha Vantage returns HTTP 200 even for errors; the body tells us what happened.
+        # Rate limits come back as {"Note": ...} (older) or {"Information": ...} (newer).
+        message = payload.get("Note") or payload.get("Information")
+        if message:
+            if "rate limit" in message.lower() or "call frequency" in message.lower():
+                key_pool.report_failure("alphavantage", key, key_pool.classify(429, message), message)
+                rate_limit_message = message
+                continue                                    # same request, next key
+            logger.error("[alphavantage] %s: %s", label, message[:200])
+            return None
+        if "Error Message" in payload:
+            logger.error("[alphavantage] %s: %s", label, payload["Error Message"][:200])
+            return None
+        key_pool.report_success("alphavantage", key)
+        return payload
+    if rate_limit_message is not None:
+        raise AlphaVantageRateLimitError(rate_limit_message)
+    return None
 
 
 async def _call_alphavantage_rsi(client: httpx.AsyncClient, symbol: str) -> tuple[float, date] | None:

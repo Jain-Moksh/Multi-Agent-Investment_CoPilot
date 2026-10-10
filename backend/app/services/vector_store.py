@@ -68,6 +68,20 @@ def get_embedding_model() -> Any:
     return _model
 
 
+async def warm_up() -> None:
+    """
+    Load the embedding model in a worker thread (started in the background at app
+    startup). A cold load takes ~40-60 s; without this, the first analysis request
+    after every server start would wait that long. Never raises.
+    """
+    start = asyncio.get_running_loop().time()
+    try:
+        await asyncio.to_thread(get_embedding_model)
+        logger.info("[vector_store] embedding model ready (%.1f s)", asyncio.get_running_loop().time() - start)
+    except Exception:
+        logger.exception("[vector_store] embedding model warm-up failed; it will be loaded on first use instead")
+
+
 def embed_texts(texts: Sequence[str]) -> list[list[float]]:
     """Synchronous: texts -> normalised 384-d vectors."""
     vectors = get_embedding_model().encode(

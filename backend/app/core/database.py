@@ -33,6 +33,14 @@ async def get_db() -> AsyncIterator[AsyncSession]:
         yield session
 
 
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    """
+    FastAPI dependency for routes that start agents / background-style work needing
+    several independent sessions (agents open their own). Overridden in tests, like get_db.
+    """
+    return AsyncSessionLocal
+
+
 async def check_db_connection() -> tuple[bool, str | None]:
     """
     Run `SELECT 1` against the database.

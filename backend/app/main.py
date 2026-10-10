@@ -5,6 +5,7 @@ Run from the backend/ folder:
     uvicorn app.main:app --reload
 """
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -15,7 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import check_db_connection, engine
 from app.core.scheduler import start_scheduler, stop_scheduler
-from app.routes import auth, debug, health, portfolio
+from app.routes import auth, chat, debug, health, portfolio, recommendations
+from app.services import vector_store
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(name)s - %(message)s")
 logger = logging.getLogger("app")
@@ -36,7 +38,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     start_scheduler()  # background news + market jobs
 
+    # Load the embedding model in the background so the first analysis doesn't wait ~45 s.
+    # Startup isn't blocked; the task is kept referenced so it isn't garbage-collected.
+    warmup = asyncio.create_task(vector_store.warm_up()) if settings.EMBEDDING_WARMUP else None
+
     yield
+
+    if warmup is not None and not warmup.done():
+        logger.info("Shutting down while the embedding model is still loading")
 
     await stop_scheduler()  # stop jobs first: they use the DB engine disposed below
     await engine.dispose()  # close pooled DB connections cleanly
@@ -62,6 +71,8 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(portfolio.router)
+app.include_router(recommendations.router)
+app.include_router(chat.router)
 
 # Developer-only tools (no login; localhost only). Never registered outside development.
 if settings.is_development:

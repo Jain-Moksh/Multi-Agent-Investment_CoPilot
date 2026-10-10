@@ -44,6 +44,7 @@ async def safe_get(
     retries_on_429: int = 0,
     backoff: float = 0.0,
     before_attempt: Callable[[], Awaitable[None]] | None = None,
+    return_error_responses: bool = False,
 ) -> httpx.Response | None:
     """
     GET that returns None instead of raising. Never logs the URL or params
@@ -51,6 +52,8 @@ async def safe_get(
 
     retries_on_429 / backoff: on HTTP 429 (rate-limited), wait backoff, 2*backoff, ...
     and try again. before_attempt: awaited before every attempt (used for throttling).
+    return_error_responses: return non-200 responses (still logged) instead of None, so the
+    caller can look at the status (e.g. to switch API key on 401/402/429).
     """
     for attempt in range(retries_on_429 + 1):
         if before_attempt is not None:
@@ -71,6 +74,6 @@ async def safe_get(
             continue
         if response.status_code != 200:
             logger.error("[%s] HTTP %s: %s", source, response.status_code, response.text[:200])
-            return None
+            return response if return_error_responses else None
         return response
     return None

@@ -17,6 +17,10 @@ env/
 .env
 .env.*
 !.env.example
+# Documents holding real API keys
+API_KEYS*.docx
+*API_KEY*.docx
+*api_key*.docx
 
 # ---- Local data ----
 chroma_data/
