@@ -998,8 +998,209 @@ production-scale performance.
   `python -I` ignores PYTHONIOENCODING; `Start-Sleep` alone is blocked by the tool; pg_ctl `start` hangs the tool, launch
   `postgres.exe` with Start-Process instead.
 
+### 2026-10-10 — Audit fixes (findings 1–6 above)
+1. **LLM fallback per model:** `key_pool` state is now keyed `(service, key, scope)`; `llm.complete` passes
+   `scope=model`. RATE_LIMIT/QUOTA rest only that (key, model); AUTH (bad key) rests the key for every model
+   (scope `""` = all). Marketaux/Alpha Vantage call without scope (whole-key rests, unchanged).
+2. **Chat fail-closed:** `classify_text_llm` returns `classifier_unavailable: True` when the LLM can't judge;
+   `scan_content` passes it on. In `/chat/message` a rule-flagged message whose classifier was unavailable is refused
+   (`status="refused_unverified"`, `UNVERIFIED_REFUSAL`, security_logs HIGH/blocked, kind `unverified_refused`); the
+   assistant LLM is not called. Chat history now skips any user message followed by a refusal (BLOCKED or unverified).
+   Answered SUSPICIOUS (classifier available) is unchanged.
+3. **Injection rules:** `CONFUSABLES` table (IPA/Cyrillic/Greek look-alikes) folded before matching; new evidence
+   `homoglyph_word` for words mixing Latin + look-alikes; `ignore_previous_instructions` also covers
+   guidance/rules/guidelines/directions/programming/training/constraints/safeguards; new rules
+   `forget_what_you_were_told`, `new_task_assignment` (needs "now", so "if your goal is to retire" stays SAFE),
+   `as_an_ai_you_must` (not "AI-driven fund"). Checked on all 454 stored real articles: 0 flagged.
+4. **News Agent:** `compute_confidence` counts only cited articles (none → 0.0); if the LLM cites nothing the status is
+   `no_relevant_news` (signal 0, confidence 0), which is in the Confidence module's DEGRADED_STATUSES.
+5. **Symbols / market data:** orchestrator `prepare` calls `ensure_market_data()`: snapshot older than 30 min (or none)
+   → `market_data.update_market_snapshot` on demand (prices for non-held stocks); no price at all →
+   `UnknownSymbolError` → `POST /recommendations/{symbol}` returns 404, nothing saved. A failed refresh with an older
+   stored price still proceeds. `update_market_snapshot` no longer calls Alpha Vantage when no price was found.
+   Live: ZZNODATA → rejected (no AV call); TCS.NS (not held) fetched on demand; repeat within 30 min not refetched.
+6. **Auth limits:** new `app/core/rate_limit.py` (in-memory sliding windows): login 5 failures/email and 20/IP per
+   15 min → 429 + Retry-After (success resets the email count); signup 10/IP per hour. conftest resets the counters.
+   **TRUSTED_DOMAINS** += tribuneindia, deccanchronicle, deccanherald, udayavani, news18, indiatoday.in, firstpost,
+   outlookindia, outlookbusiness, thestatesman, telegraphindia, newindianexpress, marketwatch.
+- Not changed (needs a decision): Hold-only outcomes (thresholds), general-mode chat grounding. The 3 real articles
+  wrongly quarantined earlier stay in `news_quarantine` (their domains are trusted now, so new copies will pass).
+- Live check of fix 1 could not reproduce the exhausted-quota case (key #1's daily quota had reset); covered by the new
+  unit test `test_quota_on_one_model_does_not_block_the_key_for_other_models`.
+- `test.md` was renamed by the user to `guide.md` (run/demo guide); updated with the fixes and new troubleshooting rows.
+
+### 2026-10-10 — Prompt 9.1: backend endpoints for the frontend
+- New routes (all need login): `GET /news` (routes/news.py), `GET /portfolio/summary` (routes/portfolio.py +
+  `portfolio_service.portfolio_summary`), `GET|PUT /profile` (routes/profile.py), `GET /security/events|quarantine|
+  stats|permissions` + `POST /security/scan-text` (routes/security.py), `GET /agents/logs` (routes/agents.py),
+  `GET /system/status` (routes/system.py). Schemas in app/schemas/{news,profile,security,system}.py and
+  HoldingSummary/PortfolioTotals/AllocationSlice/PortfolioSummary in schemas/portfolio.py. No existing response changed.
+- Design notes:
+  - `/news` returns `{items, total, limit, offset}` (pagination wrapper), SAFE rows only, `affects_my_portfolio` from the
+    user's held stock symbols; `symbol` is normalised (reliance → RELIANCE.NS), `sector` case-insensitive.
+  - Summary: stocks at the latest market_snapshots price, else (and all non-stock assets) at cost with `price_missing`;
+    unrealized_pl null when missing; `todays_pl` = Σ qty × (price − price/(1+change_pct/100)); money rounded with the
+    Portfolio Agent's `_money`. Snapshot query mirrors `PortfolioAgent._snapshot_prices` (snapshot only, no history fallback).
+  - `PUT /profile`: only the 4 stated fields (`extra="forbid"` → 422 for others); unsent fields unchanged, null clears;
+    the row is created if missing. The effective profile is still set only by the User Profiling Agent.
+  - Privacy: `/security/events` hides events whose `details.user_id` is another user (chat messages);
+    `/agents/logs` hides rows whose input `user_id` is another user (scans the newest 500 rows). Stats are global counts.
+  - `/security/scan-text`: max 2000 chars, 10/min per user via a new `rate_limit.SCAN_TEXT_PER_USER` (the chat limiter
+    counts stored chat messages, but scan-text must store nothing); returns verdict/stage/matched_patterns/reason only.
+  - `/system/status`: key COUNTS and true/false per source only (a test asserts no key value appears in the response).
+- Item 7: CORS already allows http://localhost:5173 with credentials; `GET /portfolio/zerodha/connect` already returns
+  JSON `{"login_url": ...}` (no redirect variant needed); the callback 303-redirects to
+  `{FRONTEND_URL}/portfolio?zerodha=connected|cancelled|invalid_state|error`.
+- Data-quality note seen live: Google RSS rows are tagged with the watchlist ticker that found them, so e.g. an
+  Estonian story containing the word "reliance" is tagged RELIANCE.NS and shows `affects_my_portfolio: true`.
+- Tests: tests/test_frontend_api.py (+31) → 636 passing.
+
+### 2026-10-10 — Frontend: Market News page (`/news`)
+- Files: `pages/News.jsx` (replaces placeholder), new `components/NewsCard.jsx`, `components/SentimentPill.jsx`,
+  `sentimentBucket` + `SENTIMENT_THRESHOLD` (0.15) added to `utils/format.js`. No backend changes.
+- Contract: every field comes from `NewsItemOut` / `NewsPage` (no mismatches). Symbol, sector and portfolio-only are
+  sent to the server (symbol debounced 400 ms); the title search filters loaded items client-side only.
+- Sector options are the union of every sector seen in loaded pages, so picking one does not shrink the list.
+- "Load more" uses `offset = items.length`, dedupes by id (new ingestion can shift pages), and a request counter drops
+  stale responses when filters change mid-request. Stats count the visible (search-filtered) items.
+- Clicking a symbol chip on a card applies it as the symbol filter. Build + oxlint pass.
+
+### 2026-10-10 — Frontend: Portfolio page (`/portfolio`, prompt 9.3)
+- Files: `pages/Portfolio.jsx`; `components/portfolio/{SummaryCards,HoldingsTable,HoldingModal,StatementImport,
+  ZerodhaCard}.jsx`; shared `components/{Modal,ConfirmDialog,Button,StatCard}.jsx`, `hooks/useApi.js`
+  (`{data, error, loading, reload({silent}), setData}`, stale-response guard), `utils/assets.js` (asset type labels);
+  `formatDate`, `formatNumber`, `plClass` added to `utils/format.js`. No backend changes.
+- Contract: all fields from `PortfolioSummary`/`HoldingSummary`/`PortfolioTotals`, `ImportReport`, `ZerodhaStatus`,
+  `ZerodhaSyncReport` (no mismatches). Import 422 detail is `{message, row_errors: [{row, error}]}`; `row` can be null.
+- Kite-synced holdings (`source = kite_sync`) have edit/delete disabled (backend answers 409 for them). Edit keeps
+  asset type and symbol read-only (`HoldingUpdate` only accepts quantity/avg_buy_price).
+- `?zerodha=connected|cancelled|invalid_state|error` → toast, param removed with `replace`; a ref stops the
+  StrictMode double effect from toasting twice.
+- `api/client.js`: 422 arrays now read "quantity: Input should be greater than 0"; for 429 the `detail` text is used
+  when `Retry-After` is unreadable — CORS has no `expose_headers`, so the browser cannot see that header cross-origin
+  (every backend 429 already puts the wait in `detail`).
+- Tradebook import does not change holdings, so totals do not move after an import (by design).
+- Sample files: `frontend/sample-data/tradebook-sample.csv` (2 equity + 1 F&O row) and `tradebook-invalid.csv` (422).
+- Verified against the live backend with curl (add, 409 duplicate, 422, edit, delete, import, re-import duplicates,
+  invalid import, Zerodha status/connect/sync-409). Build + oxlint pass.
+
+### 2026-10-10 — Frontend: Profile page (`/profile`, prompt 9.4)
+- Files: `pages/Profile.jsx`; `components/profile/{OptionCards,PreferencesForm,LearnedProfileCard,HowUsedCard,
+  AccountCard}.jsx`; `utils/profile.js` (risk/horizon options, basis labels, `MIN_TRADES = 5`). No backend changes.
+- Contract: `ProfileOut` / `ProfileUpdate`. `profile_basis` = `{risk, horizon}` with values stated | behaviour |
+  blended | default. `behavior_metrics` keys (from `user_profiling_agent`): transactions_count, trades_per_month,
+  avg_holding_days, quick_flip_pct, equity_share_pct, max_position_pct, distinct_stocks, plus the behaviour-only
+  risk_appetite / investment_horizon. No mismatches.
+- "Insufficient history" is not stored on the profile; the UI derives it from `transactions_count < 5` (the agent's
+  MIN_TRADES). `classified_at == null` → "Not classified yet" (the agent runs on the next recommendation).
+- PUT sends all four fields every time; clicking a selected option card again clears it (null). Amount validated
+  client-side: >= 0, at most 2 decimals, fits NUMERIC(14,2).
+- "How this is used" follows `confidence_module.py`, not the prompt wording: horizon changes the market (x1.5 short /
+  x0.6 long) and fundamental (x0.75 / x1.3) weights, news weight never changes; conservative users get bearish
+  signals x1.5 (aggressive x0.75); buy/sell thresholds are the same for everyone.
+- Build + oxlint pass. Not verified live (backend was stopped).
+
+### 2026-10-10 — Frontend: Dashboard page (/)
+- `frontend/src/pages/Dashboard.jsx` + page-private folder `frontend/src/pages/dashboard/` (KpiCards, AllocationCard,
+  WeightsCard, RecommendationsCard, NewsCard, QuickAnalysis, CardState, helpers.js, useRequest.js). No shared file
+  (components/, api/, App.jsx, Layout) was changed, so parallel page chats can't collide with it.
+- Data: one `GET /portfolio/summary` request feeds the KPI cards, allocation donut, weights bars and the missing-price
+  banner; `GET /recommendations?limit=4` and `GET /news?portfolio_only=true&limit=5` (falls back to the latest 5) are
+  separate requests, so each card has its own loading / error (Retry) / "Not built yet" state.
+- Charts use `isAnimationActive={false}`: with the entry animation, headless Edge captured axes without bars/slices.
+- Verified in headless Edge through the real login form: logged-out `/` → `/login`; all cards render; RELIANCE at 63.6%
+  shows the red bar + "High concentration" chip; Quick analysis → `/insights?symbol=INFY`; a recommendation row →
+  `/insights?symbol=RELIANCE.NS`; blocking `/news` only turns the news card into an error with Retry. Console: no
+  errors, only React Router v7 future-flag warnings from the shared `App.jsx` BrowserRouter.
+- Build OK (bundle 646 kB → Vite's >500 kB advisory, mostly Recharts). oxlint: one heuristic warning
+  (set-state-in-effect) in `useRequest.js` (setState happens after an await; harmless).
+
+### 2026-10-10 — Frontend: AI Assistant page (`/assistant`)
+- Files: `pages/Assistant.jsx` (replaces placeholder), new `components/chat/ConversationList.jsx`,
+  `components/chat/MessageBubble.jsx` (bubbles, badges, warning bubbles, typing indicator, "What did the assistant
+  use?" panel), `components/chat/Markdown.jsx` (react-markdown with Tailwind element styles, no raw HTML). No backend changes.
+- Live replies use `ChatReply`: `status` (ok / refused / refused_unverified / llm_unavailable / blocked_output), `mode`,
+  `detected_symbols`, `security.verdict/reason`, `sources`. Refused statuses → red "Blocked by the security layer"
+  bubble with `security.reason`; `llm_unavailable` → amber note + Retry (re-sends the same text in the same
+  conversation); `blocked_output` → "Reply withheld". 429 shows the Retry-After message and puts the text back in the input.
+- Contract gaps (not invented, shown as "-"): `ChatReply` has no `context_used` (it is only stored in chat_logs), so
+  the "used" panel shows mode, detected symbols and news sources (ids, titles, links) only, not portfolio analysis or
+  recommendation details. `GET /chat/conversations/{id}` (`ChatMessageOut`) has no mode/status/symbols/sources, so
+  history replies show "Mode -"; their shield and the blocked bubble are inferred from the preceding user message's
+  `security_status`.
+- Conversation list and "New chat" are disabled while a reply is pending (prevents a reply landing in the wrong chat).
+
+### 2026-10-10 — Frontend: Security Center (`/security`)
+- Files: `pages/Security.jsx` (tabs, active tab in `?tab=`), new `components/security/`: `OverviewTab`, `AttackTesterTab`,
+  `EventsTab`, `QuarantineTab`, `PermissionsTab`, `AsyncBlock` (loading / error / not-built wrapper), `SecurityBadges`
+  (event type, severity, verdict). Uses the existing `hooks/useApi.js`. No backend changes; all fields match 9.1 schemas.
+- Events: type filter pills remount the table (`key={type}`) so each type is one fresh request; rows expand into a
+  key/value view of `details` (strings/numbers/lists inline, nested objects as pretty JSON). Summary column = first of
+  details.reason/detail/kind/message/title, else "-".
+- Permission matrix columns = union of all read/write tables from `/security/permissions`.
+- Tester presets checked against `scan_text_rules` locally: the headline and "ignore the noise" preset are SAFE at the
+  rule stage (LLM never runs); the other four match rules (ignore_previous_instructions; fake_role_marker +
+  ignore_the_above + role_reassignment; new_instructions; as_an_ai_you_must) and go to the LLM classifier.
+- `/security/scan-text` stores nothing by design, so tester scans never appear in Events (the UI says so); blocked
+  chat messages do. `classifier_unavailable` is not in `ScanTextOut`, so the tester cannot say when a SUSPICIOUS
+  verdict means "LLM could not judge".
+
+### 2026-10-10 — AI Insights page (/insights) + small additive backend change (approved by the user)
+- Backend (additive, nothing existing changed): `RecommendationOut.details` (the saved `recommendations.details`:
+  decision_label, holds_stock, driver, thresholds, agreement{agreement, evidence, leans, weights, excluded, conflicts,
+  profile}, agents, agent_errors, timings_ms, explanation_source) is now returned by `POST /recommendations/{symbol}`;
+  new `GET /recommendations/{id}` rebuilds the same response from the saved row (no LLM call; 404 for other users);
+  `AgentView.facts` + `agent_facts()` save 2–5 key numbers per agent (rsi/trend/price, P/L/weight/concentration,
+  P/E/valuation/sector, articles/cited/severity, risk/horizon). Tests +2.
+- Frontend: `pages/Insights.jsx` + `pages/insights/{helpers.js, ResultCard.jsx, AgentCard.jsx, ExplainPanel.jsx,
+  HistoryList.jsx}`; `api/recommendations.js` += `getRecommendation(id)`. Auto-runs from `?symbol=`; 429 → live
+  countdown on the disabled button; 404/422 messages; degraded agents say so in plain words and show
+  "Not used in the decision (status …)" from `excluded`.
+- Verified in headless Edge (real login, real LLM): RELIANCE (held) → Hold 50%; TCS (not held) → Buy 66% (first live
+  Buy); immediate re-analyze → "Try again in 28s"; ZZNODATA → 404 text; `INF$Y` → format error; re-opening a history
+  row sent only `GET /recommendations/{id}`; no console errors.
+- AGENTS.md ("dont add any comments in code") noticed: new code (frontend and this backend change) has no comments.
+
+### 2026-10-10 — Opportunities, Notifications (bell + page), System Check pages
+- Backend has NO `/opportunities` or `/notifications` yet → both UIs show their "not built" states on 404.
+  When built, the UI expects (tolerant, missing → "-"): opportunities = list (or `{items}`) of
+  `{symbol, company_name?, current_price|price, change_pct, score, reasons[], explanation, fits_profile}`;
+  notifications = list (or `{items}`) of `{id, title|message, message?, symbol?, created_at, read|is_read|read_at}`,
+  `GET /notifications?unread_only=true|limit=N`, `POST /notifications/{id}/read` ("Mark all read" calls it per item).
+- `components/NotificationBell.jsx` (new) replaces the static bell in the shared `Layout.jsx` (only that swap):
+  polls every 60 s; on 404 shows a crossed-out bell "Notifications not enabled yet" and stops polling (verified: no
+  requests during 65 s+).
+- `pages/System.jsx` + `pages/system/checks.js`: 17 cheap checks (auto on load, share one `/system/status` call) +
+  2 AI checks (own Run button, "uses AI quota"); summary line; Copy report = markdown table (verified via clipboard).
+  Live result: 14 working, 3 partial (Zerodha not connected; AI recommendation degraded by user_profiling
+  insufficient_history; last news run pending right after start), 2 not built, 0 failing.
+- Reused shared pieces from the other chats: `hooks/useApi`, `components/Button`, `useToast`, `utils/format.plClass`.
+
+### 2026-10-10 — Frontend final pass (consistency, session expiry, README, build, smoke test)
+- Session expiry: `api/client.js` sends a failed refresh to `/login?expired=1&next=<path>` (new `safeNextPath()`
+  only allows same-site paths, never /login or /signup); `AuthForm` shows "Your session expired, please log in
+  again"; `pages/Login.jsx` and AuthForm return to `next` (or `state.from`, which now includes the query string).
+  Fresh visits to /login show no message.
+- `App.jsx`: pages are lazy-loaded (largest chunk was 904 kB, now 367 kB, no build warning) and the React Router
+  v7 future flags are set (no console warnings).
+- Layout: tighter padding on phones and a truncating header title. News filters no longer overflow at 390 px.
+  Insights history rows wrap on phones. The Security tab strip scrolls the active tab into view.
+- `frontend/README.md` rewritten: install, run, env, auth flow, folder structure, page → endpoint table.
+- `npm run build` is clean; `npm run lint` shows 0 errors and 11 style warnings (set-state-in-effect,
+  only-export-components, plus 2 false `Date.now` purity hits inside an event handler).
+- Smoke test (headless Edge, real Supabase backend, scheduler off, throwaway user deleted afterwards):
+  - 51 calls covering every API-module function from inside the page all returned the expected status:
+    409 on a duplicate holding and on Zerodha sync while not connected, 422 on a bad CSV and on a forbidden profile
+    field, 429 on an immediate re-analysis, 404 on an unknown ticker, and 404 on /opportunities and /notifications,
+    which are not built.
+  - All 14 routes at 1440, 820 and 390 px: disclaimer present, no page-level horizontal scroll, no error
+    banners, and no console errors or warnings.
+  - The session-expiry flow was verified end to end.
+- Known data and UX notes: `GET /news?symbol=TCS` returned 0 articles (tagging); a user with fewer than 5 trades
+  stays `insufficient_history`; React StrictMode doubles requests in dev only.
+
 ### Testing setup (as of 2026-10-10)
-- `pytest` → 574 tests (~2 min with Postgres). Tests never use Supabase (conftest overrides `DATABASE_URL`).
+- `pytest` → 636 tests (~3.5 min with Postgres). Tests never use Supabase (conftest overrides `DATABASE_URL`).
 - Note: Claude's Bash tool lost its Unix utilities (head/grep/sed) on 2026-10-04;
   PowerShell is used for commands since then. Postgres-only tests (ON CONFLICT, ARRAY, JSONB) need
   `TEST_DATABASE_URL` pointing at an **empty, disposable** DB (tables dropped after);

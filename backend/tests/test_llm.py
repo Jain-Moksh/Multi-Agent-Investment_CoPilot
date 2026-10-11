@@ -176,8 +176,9 @@ async def test_falls_back_to_the_next_key_in_order(monkeypatch):
 
     assert await llm.complete("s", "u") == "third key answered"
     assert [len(f.requests) for f in fakes.values()] == [1, 1, 1]
-    # The rate-limited key rests; the empty-reply one does not. Next call skips key 1, tries key 2 again.
-    assert key_pool.usable_keys("gemini") == ["key-bbbb2", "key-cccc3"]
+    # The rate-limited key rests (for this model); the empty-reply one does not. Next call skips key 1.
+    assert key_pool.usable_keys("gemini", scope="gemini-3.8-flash") == ["key-bbbb2", "key-cccc3"]
+    assert key_pool.usable_keys("gemini") == ["key-aaaa1", "key-bbbb2", "key-cccc3"]   # not banned for other models
     fakes["key-bbbb2"].error = None
     fakes["key-bbbb2"].text = "second key is back"
     assert await llm.complete("s", "u") == "second key is back"
@@ -264,7 +265,62 @@ async def test_all_keys_failing_lists_every_attempt(monkeypatch):
     assert "test-gemini-key" not in message and "sk-test-1111" not in message   # keys are masked
 
     # Every key is resting now (only the empty-reply key is not): the next call tries just that one.
-    assert key_pool.usable_keys("gemini") == ["key-bbbb2"] and key_pool.usable_keys("openai") == []
+    assert key_pool.usable_keys("gemini", scope="gemini-3.8-flash") == ["key-bbbb2"]
+    assert key_pool.usable_keys("openai", scope=settings.OPENAI_MODEL) == []
+
+
+async def test_quota_on_one_model_does_not_block_the_key_for_other_models(monkeypatch):
+    """The audit scenario: model A's daily quota is used up on every key, model B still has quota."""
+    monkeypatch.setattr(settings, "GEMINI_MODEL", "model-a,model-b")
+    monkeypatch.setattr(settings, "GEMINI_API_KEYS", "key-bbbb2")
+    calls = []
+
+    class QuotaOnA(FakeGemini):
+        async def _generate(self, *, model, contents, config):
+            calls.append((self.key, model))
+            if model == "model-a":
+                raise APIError(429, "RESOURCE_EXHAUSTED quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier")
+            return SimpleNamespace(text=f"{model} via {self.key}")
+
+    def client(key):
+        fake = QuotaOnA()
+        fake.key = key
+        return fake
+
+    monkeypatch.setattr(llm, "_gemini_client", client)
+    assert await llm.complete("s", "u") == "model-b via test-gemini-key"
+    assert calls == [("test-gemini-key", "model-a"), ("key-bbbb2", "model-a"), ("test-gemini-key", "model-b")]
+    # Second call: model A is skipped on both keys (resting for A only), model B answers at once.
+    calls.clear()
+    assert await llm.complete("s", "u") == "model-b via test-gemini-key"
+    assert calls == [("test-gemini-key", "model-b")]
+    assert key_pool.usable_keys("gemini", scope="model-a") == []
+    assert key_pool.usable_keys("gemini", scope="model-b") == ["test-gemini-key", "key-bbbb2"]
+
+
+async def test_invalid_key_is_skipped_for_every_model(monkeypatch):
+    monkeypatch.setattr(settings, "GEMINI_MODEL", "model-a,model-b")
+    monkeypatch.setattr(settings, "GEMINI_API_KEYS", "key-bbbb2")
+    calls = []
+
+    class BadFirstKey(FakeGemini):
+        async def _generate(self, *, model, contents, config):
+            calls.append((self.key, model))
+            if self.key == "test-gemini-key":
+                raise APIError(400, "API key not valid. API_KEY_INVALID")
+            return SimpleNamespace(text="ok")
+
+    def client(key):
+        fake = BadFirstKey()
+        fake.key = key
+        return fake
+
+    monkeypatch.setattr(llm, "_gemini_client", client)
+    assert await llm.complete("s", "u") == "ok"
+    calls.clear()
+    monkeypatch.setattr(settings, "GEMINI_MODEL", "model-b")
+    assert await llm.complete("s", "u") == "ok"
+    assert calls == [("key-bbbb2", "model-b")]          # the bad key is not retried on another model
 
 
 async def test_everything_resting_fails_fast_without_calls(monkeypatch):

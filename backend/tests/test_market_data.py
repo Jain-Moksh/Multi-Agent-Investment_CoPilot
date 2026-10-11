@@ -277,8 +277,10 @@ async def test_update_when_all_price_sources_fail(pg_sessionmaker, monkeypatch):
     monkeypatch.setattr(md, "_yfinance_quote_sync", lambda symbol: None)
     monkeypatch.setattr(md, "_nse_eq_sync", lambda base: {})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(Counter(RSI_JSON))) as client:
+    counter = Counter(RSI_JSON)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(counter)) as client:
         update = await md.update_market_snapshot("RELIANCE.NS", pg_sessionmaker, client)
 
     assert update.quote is None and update.snapshot_id is None
     assert await latest_snapshot(pg_sessionmaker) is None  # nothing written
+    assert counter.calls == 0 and update.rsi is None       # no Alpha Vantage call wasted on an unknown symbol

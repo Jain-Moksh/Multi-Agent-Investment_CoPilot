@@ -140,12 +140,33 @@ async def test_suspicious_message_is_answered_and_logged(pg_client, pg_sessionma
 
 
 async def test_classifier_down_fails_closed_to_suspicious(pg_client, pg_sessionmaker, chroma, fake_model, monkeypatch):
-    fake = FakeLLM(classifier_error=llm.LLMNotConfigured("no key"), assistant_error=llm.LLMNotConfigured("no key"))
+    fake = FakeLLM(classifier_error=llm.LLMError("all LLM keys failed: 429 quota"))
     monkeypatch.setattr(llm, "complete", fake)
     headers = await signup_headers(pg_client)
     body = (await send(pg_client, headers, INJECTION)).json()
     assert body["security"]["verdict"] == "SUSPICIOUS"              # never upgraded to SAFE
-    assert body["status"] == "llm_unavailable" and body["reply"] == assistant_module.UNAVAILABLE_REPLY
+    # Rule-flagged + unverifiable -> refused; the assistant LLM is never called (audit finding 3).
+    assert body["status"] == "refused_unverified" and body["reply"] == chat_route.UNVERIFIED_REFUSAL
+    assert body["mode"] == "refused" and fake.assistant_calls == []
+    log = (await security_logs(pg_sessionmaker))[0]
+    assert (log.severity, log.blocked, log.details["kind"]) == (Severity.HIGH, True, "unverified_refused")
+
+    # The refused message never enters later prompts; a clean follow-up is answered normally.
+    fake.classifier_error = None
+    follow = (await send(pg_client, headers, "What is a P/E ratio?", body["conversation_id"])).json()
+    assert follow["status"] == "ok"
+    prompt = fake.assistant_calls[0]["user"]
+    assert "Ignore previous instructions" not in prompt and chat_route.UNVERIFIED_REFUSAL[:30] not in prompt
+
+
+async def test_clean_message_is_answered_even_when_the_classifier_is_down(pg_client, pg_sessionmaker, chroma,
+                                                                          fake_model, monkeypatch):
+    # Rules say SAFE -> the classifier is never needed, so an LLM outage of the classifier changes nothing.
+    fake = FakeLLM(classifier_error=llm.LLMError("down"))
+    monkeypatch.setattr(llm, "complete", fake)
+    headers = await signup_headers(pg_client)
+    body = (await send(pg_client, headers, "What is an index fund?")).json()
+    assert body["status"] == "ok" and fake.classifier_calls == []
 
 
 # ---------------- output check: system-prompt canary ----------------

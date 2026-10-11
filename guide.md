@@ -2,18 +2,7 @@
 
 The backend is finished and runs on your Supabase database. **The frontend (React) is not built yet**, so the demo is done through the built-in web page `/docs` (Swagger), which lets you click and try every API. Everything below uses only that page plus one browser tab for Supabase.
 
----
-## PART 1. Before you start (one-time checks, 5 minutes)
 
-- [ ] `backend/.env` exists and has real values (it should already: `DATABASE_URL` with the Supabase password, `JWT_SECRET_KEY`, Gemini/OpenAI/Marketaux/Alpha Vantage keys)
-- [ ] Internet is on (the app calls Google News, Yahoo Finance, Gemini and Supabase)
-- [ ] **Gemini free-tier limit:** each key allows only about **20 AI requests per day per model**. One recommendation uses 2 AI calls, one chat message uses 1. So **do not rehearse many times on the day of the demo**. One full rehearsal the day before is fine.
-- [ ] If `gemini-3.5-flash` is already used up for the day, open `backend/.env` and change the model line so the other models come first:
-  `GEMINI_MODEL=gemini-3.1-flash-lite,gemini-3.8-flash,gemini-3.5-flash`
-  (then restart the server). The audit found that when the first model runs out, the app does not move to the next model yet (known bug, fix pending), so putting a fresh model first is the safe workaround.
-- [ ] Close anything else using port 8000.
-
----
 ## PART 2. Start the project
 
 Open **PowerShell** and run:
@@ -59,18 +48,6 @@ Open **http://127.0.0.1:8000/docs**. Every step below is "click an endpoint → 
 3. `GET /portfolio/holdings` → both listed.
 4. Optional: `PUT /portfolio/holdings/{id}` to change a quantity, `DELETE` to remove one.
 
-### Step 3. Import a broker file (Zerodha Tradebook CSV)
-Save this as `trades.csv` on your desktop:
-```
-symbol,isin,trade_date,exchange,segment,series,trade_type,auction,quantity,price,trade_id,order_id,order_execution_time
-RELIANCE,INE002A01018,2026-01-05,NSE,EQ,EQ,buy,false,5,2450.50,T1001,O1,2026-01-05T09:30:12
-RELIANCE,INE002A01018,2026-02-10,NSE,EQ,EQ,buy,false,5,2600,T1002,O2,2026-02-10T10:15:00
-INFY,INE009A01021,2026-03-01,NSE,EQ,EQ,buy,false,4,1500,T1003,O3,2026-03-01T11:00:00
-INFY,INE009A01021,2026-04-15,NSE,EQ,EQ,sell,false,2,1650,T1004,O4,2026-04-15T14:20:00
-TCS,INE467B01029,2026-05-20,NSE,EQ,EQ,buy,false,1,3300,T1005,O5,2026-05-20T09:45:00
-```
-`POST /portfolio/import-statement` → choose the file → Execute → `inserted: 5`. Upload it again → `inserted: 0, duplicates_skipped: 5` (safe to re-upload). To show error handling, change one `buy` to `hold` and upload → **422** with the exact bad row, nothing saved.
-
 ### Step 4. Show live data collection (the background jobs)
 - `GET /health/scheduler` → shows the two jobs: **news every 10 minutes**, **prices every 30 minutes**, and the result of the last run (how many articles, how many were safe, embedded or quarantined). The first run happens 60 seconds after start.
 - Open **http://127.0.0.1:8000/debug/trace** (developer page, works only on this laptop): type `RELIANCE.NS`, press the button. It shows, in plain text, the raw articles from Google News and Marketaux, what was saved, and the **security verdict of each article**. (Takes 1-2 minutes because GDELT is rate-limited; it uses a little of the Marketaux daily quota, so do it once.)
@@ -106,9 +83,9 @@ cd "C:\Users\moksh\Videos\Projects\Ongoing  Projects\Investment_CoPilot\backend"
 .\venv\Scripts\activate
 pytest tests/test_injection_filter.py tests/test_confidence_module.py -v
 ```
-(Tests that need a separate test database are skipped automatically. The full run of 574 tests needs a throwaway PostgreSQL and takes ~2 minutes: you can say "574 automated tests pass".)
+(Tests that need a separate test database are skipped automatically. The full run of 605 tests needs a throwaway PostgreSQL and takes ~2.5 minutes: you can say "605 automated tests pass".)
 
-**Honest note for the manager:** the keyword scanner catches the common attacks but a cleverly reworded one can slip through the first check; the AI agents are still told to treat article text as data. This is listed as a known improvement.
+**Honest note for the manager:** the keyword scanner now also catches reworded attacks found in the audit ("disregard prior guidance", "as an AI you must…", look-alike letters such as Cyrillic "о" in "ignоre"), but no keyword list is perfect; the AI agents are additionally told to treat article text as data, and if the AI checker itself is down, a flagged chat message is refused rather than answered.
 
 ---
 ## PART 4. Show the database (Supabase)
@@ -117,28 +94,21 @@ pytest tests/test_injection_filter.py tests/test_confidence_module.py -v
 2. Tables worth showing: `users` (hashed passwords), `portfolio_holdings`, `transactions`, `news_events` (hundreds of real articles with `security_status`), `news_quarantine`, `security_logs`, `recommendations` (see `details`), `chat_logs`, `agent_logs`.
 3. Point out: all tables are locked against Supabase's public web API (row-level security), only the backend can read them.
 
----
-## PART 5. Suggested 10-minute presentation flow
 
-1. **Problem (1 min):** retail investors in India get scattered news and generic advice; we built a decision-support copilot, not a trading bot.
-2. **Architecture (2 min):** data sources (Google News, Marketaux, GDELT, Yahoo Finance, Alpha Vantage, Zerodha) → 5 agents → agreement/confidence module → recommendation + chatbot → PostgreSQL (Supabase) + ChromaDB. Mention FastAPI, LangGraph, Gemini/OpenAI with automatic fallback across 4 keys.
-3. **Live demo (5 min):** Steps 1, 2, 5, 6 (Part 3) + the injection block from Step 7A.
-4. **Security (1 min):** the three layers: injection scan (rules then AI), per-agent permissions, poisoned-news quarantine.
-5. **Status and next (1 min):** backend complete and audited (574 tests), frontend next; known improvements list below.
-
----
 ## PART 6. If something goes wrong during the demo
 
 | What you see | What to do |
 |---|---|
 | `health` says database "unreachable" | Check internet; check the Supabase password in `.env`; restart the server |
-| Recommendation says news "llm_unavailable" / chat says "assistant isn't available" | Free AI quota used up for now. Wait a minute and retry, or put another model first in `GEMINI_MODEL` (Part 1) and restart. Everything else (agents, prices) still works. |
+| Recommendation says news "llm_unavailable" / chat says "assistant isn't available" | Every Gemini key AND every Gemini model is out of quota for now (the app already moves to the next key and next model by itself). Wait a minute and retry. Everything else (agents, prices) still works. |
+| Chat says "I can't answer that message right now ... safety check" | The message contained attack-like wording and the AI safety check was unavailable, so it was refused on purpose. Rephrase or retry in a minute. |
+| `404 No market data found for ...` on a recommendation | The symbol is not a listed NSE/BSE ticker (or Yahoo is unreachable). Check the spelling, e.g. `TCS`, `INFY`, `HDFCBANK`. |
+| `429 Too many failed login attempts` | 5 wrong passwords for one email within 15 minutes. Wait the number of seconds shown (or restart the server, which clears the counter). |
 | First request is very slow | The AI embedding model is still loading (first minute after start). Wait and retry. |
 | `429` on recommendation | Normal: wait 30 seconds |
 | `401` on everything | Click **Authorize** again (token lasts 30 min) |
 | Error about port 8000 in use | Another server is running: close it, or run `uvicorn app.main:app --port 8001` |
 | Debug trace page shows GDELT 429 | Normal on your network; Google News and Marketaux still work |
-| Market data says "no_data" for a stock you don't hold | Known limitation: prices are collected only for stocks in someone's portfolio. Add the stock to the portfolio first. |
 
 ---
 ## PART 7. After the demo (clean up)
@@ -146,11 +116,21 @@ pytest tests/test_injection_filter.py tests/test_confidence_module.py -v
 Your demo user and its data stay in Supabase. To remove them: Supabase → Table Editor → delete the rows for `demo@example.com` in `chat_logs`, `chat_messages`, `chat_conversations`, `recommendations`, `transactions`, `portfolio_holdings`, `refresh_tokens`, `user_profiles`, then `users`. (Or just leave it; it does no harm.) Stop the server with `Ctrl + C`.
 
 ---
-## Known limitations to mention if asked (found in the audit)
+## Audit findings: what was fixed (2026-10-10)
 
-- AI quota: free Gemini keys allow ~20 requests/day/model; OpenAI backup has no credits yet. Fix pending: use the spare models automatically, add credit.
-- A reworded attack can slip past the first keyword scan (the AI agents still ignore instructions inside articles). Fix pending.
+- **AI fallback:** if one Gemini model runs out of quota on a key, the same key is now tried on the next model (before, the key was skipped for all models).
+- **Attack filter:** catches the reworded and look-alike-letter attacks the audit found; zero false alarms on the 454 real stored articles.
+- **Chat:** if the AI safety check is down, a flagged message is refused instead of reaching the chatbot.
+- **News Agent:** when the news found is not about the stock, it now reports "no relevant news" (confidence 0) instead of a confident "neutral".
+- **Stocks you don't hold:** prices/RSI are fetched on demand; unknown tickers get a clear 404 and nothing is saved.
+- **Login:** 5 failed attempts per email (20 per address) in 15 min → temporary block; 10 sign-ups per address per hour.
+- **Trusted news list:** added established regional/national outlets (The Tribune, Deccan Chronicle/Herald, Udayavani, News18, India Today, …) after a real syndicated story was wrongly quarantined.
+
+## Known limitations to mention if asked
+
+- AI quota: free Gemini keys allow ~20 requests/day per model; OpenAI backup has no credits yet.
+- No keyword filter is complete; the second line of defence is that every agent treats article/user text as data.
 - Recommendations so far are mostly "Hold": the Buy/Sell thresholds are strict, not yet tuned on more data.
-- No technical data for stocks you don't hold; invalid tickers are not rejected yet.
+- General chat questions (no stock named) get general answers; naming a stock you hold gives answers based on your real numbers and news.
 - Zerodha live login and sync are written and unit-tested but not tried with a real Zerodha account.
-- No login rate-limit yet. Frontend not started.
+- Frontend not started.

@@ -419,15 +419,17 @@ async def update_market_snapshot(
         nse = await fetch_nse_quote(symbol)
         quote = _quote_from_nse(symbol, nse) if nse else None
 
+    if quote is None:
+        # No price = unknown ticker or every source down: don't spend an Alpha Vantage call
+        # (25/day) on it either.
+        logger.error("[market] no price available for %s from any source", symbol)
+        return MarketUpdate(symbol, None, None, None)
+
     try:
         rsi = await fetch_alphavantage_rsi(symbol, session_factory, client)
     except Exception:  # RSI is optional: never let it stop the price update
         logger.exception("[market] RSI lookup crashed for %s", symbol)
         rsi = None
-
-    if quote is None:
-        logger.error("[market] no price available for %s from any source", symbol)
-        return MarketUpdate(symbol, None, rsi, None)
 
     async with session_factory() as db:
         snapshot = MarketSnapshot(

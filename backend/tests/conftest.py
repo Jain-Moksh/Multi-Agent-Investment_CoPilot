@@ -35,6 +35,7 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 from app.core.database import get_db, get_session_factory  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Base, BrokerConnection, PortfolioHolding, RefreshToken, Transaction, User  # noqa: E402
+from app.core import rate_limit  # noqa: E402
 from app.services import key_pool  # noqa: E402
 
 SQLITE_TABLES = [
@@ -48,10 +49,12 @@ SQLITE_TABLES = [
 
 @pytest.fixture(autouse=True)
 def fresh_key_pool():
-    """Every test starts with no API key marked as rate-limited / invalid."""
+    """Every test starts with no API key marked as rate-limited / invalid, and no auth rate-limit counts."""
     key_pool.reset()
+    rate_limit.reset_all()
     yield
     key_pool.reset()
+    rate_limit.reset_all()
 
 
 @pytest.fixture

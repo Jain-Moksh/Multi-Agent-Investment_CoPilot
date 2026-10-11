@@ -61,13 +61,13 @@ def test_rest_times(monkeypatch):
     key_pool.report_failure("marketaux", "b-222222", F.AUTH)
     key_pool.report_failure("marketaux", "c-333333", F.OTHER)                  # no rest
     assert key_pool.usable_keys("marketaux") == ["c-333333"]
-    rest = key_pool._state[("marketaux", "a-111111")].resting_until - start
+    rest = key_pool._state[("marketaux", "a-111111", "")].resting_until - start
     assert timedelta(seconds=59) < rest <= timedelta(seconds=61)
-    assert key_pool._state[("marketaux", "b-222222")].resting_until - start >= timedelta(hours=6) - timedelta(seconds=1)
+    assert key_pool._state[("marketaux", "b-222222", "")].resting_until - start >= timedelta(hours=6) - timedelta(seconds=1)
 
     key_pool.report_failure("marketaux", "a-111111", F.RATE_LIMIT)            # repeat -> doubles
-    assert key_pool._state[("marketaux", "a-111111")].strikes == 2
-    assert key_pool._state[("marketaux", "a-111111")].resting_until - start > timedelta(seconds=119)
+    assert key_pool._state[("marketaux", "a-111111", "")].strikes == 2
+    assert key_pool._state[("marketaux", "a-111111", "")].resting_until - start > timedelta(seconds=119)
     key_pool.report_success("marketaux", "a-111111")
     assert key_pool.usable_keys("marketaux") == ["a-111111", "c-333333"]
     assert key_pool.next_free_at("marketaux") is not None
@@ -76,7 +76,7 @@ def test_rest_times(monkeypatch):
 def test_rate_limit_rest_is_capped():
     for _ in range(20):
         key_pool.report_failure("x", "k-12345678", F.RATE_LIMIT)
-    rest = key_pool._state[("x", "k-12345678")].resting_until - datetime.now(UTC)
+    rest = key_pool._state[("x", "k-12345678", "")].resting_until - datetime.now(UTC)
     assert rest <= key_pool.RATE_LIMIT_MAX_REST
 
 

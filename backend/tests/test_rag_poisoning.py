@@ -285,3 +285,12 @@ def test_quarantine_has_every_news_events_column():
 
 def test_candidate_cap_is_reasonable():
     assert rp.MAX_CLUSTER_CANDIDATES >= 50 and rp.CLUSTER_WINDOW == timedelta(hours=72)
+
+
+@pytest.mark.parametrize("domain", ["tribuneindia.com", "www.deccanchronicle.com", "udayavani.com", "m.deccanherald.com",
+                                    "news18.com", "indiatoday.in", "marketwatch.com"])
+def test_regional_outlets_are_trusted(domain):
+    # Regression (audit 2026-10-10): a real story syndicated on three of these sites was quarantined
+    # as "coordinated fake content" because none of them was on the trusted list.
+    assert check_source_trust(domain) == "trusted"
+    assert check_source_trust(domain.split(".")[-2] + "-news.example") == "untrusted"   # look-alikes stay untrusted

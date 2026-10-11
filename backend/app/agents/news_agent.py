@@ -99,8 +99,12 @@ def compute_confidence(articles: list[dict[str, Any]], cited_ids: list[int]) -> 
     volume = supporting (cited) articles / 4, capped at 1   (4+ articles = full marks)
     trust  = average source weight: trusted 1.0, untrusted 0.6
     Examples: 1 trusted article -> 0.47; 4 trusted -> 1.0; 4 untrusted -> 0.72.
+    Only articles the LLM actually relied on count: no cited article -> 0.0 (the articles
+    retrieved were not about this stock, so they are no evidence either way).
     """
-    cited = [a for a in articles if a["news_event_id"] in cited_ids] or articles
+    cited = [a for a in articles if a["news_event_id"] in cited_ids]
+    if not cited:
+        return 0.0
     volume = min(len(cited) / 4, 1.0)
     trust = sum(TRUST_WEIGHT[a["source_trust"]] for a in cited) / len(cited)
     return round(0.3 + 0.7 * volume * trust, 2)
@@ -225,6 +229,11 @@ class NewsAgent(BaseAgent):
             signal=compute_signal(verdict.sentiment, verdict.severity),
             confidence=compute_confidence(articles, cited),
         )
+        if not cited:
+            # The retrieved articles (often the symbol-less fallback) weren't about this stock:
+            # report that instead of a confident "neutral", so the Confidence module leaves
+            # the News Agent out rather than counting it as evidence.
+            result.update(status="no_relevant_news", sentiment="neutral", severity="low", signal=0.0, confidence=0.0)
         if scores:
             result["sentiments_saved"] = await self._save_article_sentiments(scores)
 

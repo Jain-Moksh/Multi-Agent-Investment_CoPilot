@@ -12,10 +12,10 @@ import pytest
 from sqlalchemy import func, select
 
 from app.agents import orchestrator as orch
-from app.agents.orchestrator import AGENT_NAMES, UnknownUserError, build_graph, run_analysis
+from app.agents.orchestrator import AGENT_NAMES, UnknownSymbolError, UnknownUserError, build_graph, run_analysis
 from app.models import AgentLog, CompanyFundamentals, MarketSnapshot, PortfolioHolding, PriceHistory, User
 from app.models.enums import AssetType, TransactionSource
-from app.services import fundamentals, llm
+from app.services import fundamentals, llm, market_data
 from tests.test_vector_store import chroma, fake_model  # noqa: F401  (fixtures)
 
 AGENT_CLASSES = {"news_agent": "NewsAgent", "market_agent": "MarketAgent", "portfolio_agent": "PortfolioAgent",
@@ -62,7 +62,17 @@ def fakes(monkeypatch):
         return type("Row", (), {"name": "Infosys Limited"})()
 
     monkeypatch.setattr(fundamentals, "refresh_if_stale", no_fundamentals)
+
+    # No network: pretend the on-demand price fetch worked (tests that need a failure override this).
+    market_fetches: list[str] = []
+
+    async def fake_update(symbol, session_factory=None, client=None):
+        market_fetches.append(symbol)
+        return market_data.MarketUpdate(symbol, quote=object(), rsi=None, snapshot_id=None)
+
+    monkeypatch.setattr(market_data, "update_market_snapshot", fake_update)
     install.calls = calls
+    install.market_fetches = market_fetches
     return install
 
 
@@ -141,6 +151,49 @@ async def test_unknown_user(pg_sessionmaker, fakes):
     with pytest.raises(UnknownUserError):
         await run_analysis(404, "INFY.NS", pg_sessionmaker)
     assert fakes.calls == []  # no agent ran
+
+
+async def test_market_data_is_fetched_on_demand_for_a_stock_without_fresh_prices(pg_sessionmaker, user, fakes):
+    await user()
+    await run_analysis(1, "TCS.NS", pg_sessionmaker)
+    assert fakes.market_fetches == ["TCS.NS"]          # no stored price -> fetched now (audit: was "no_data")
+
+
+async def test_fresh_stored_price_is_not_refetched(pg_sessionmaker, user, fakes):
+    await user()
+    async with pg_sessionmaker() as db:
+        db.add(MarketSnapshot(symbol="INFY.NS", price=Decimal(1500), source="yfinance",
+                              fetched_at=datetime.now(UTC) - timedelta(minutes=5)))
+        await db.commit()
+    await run_analysis(1, "INFY.NS", pg_sessionmaker)
+    assert fakes.market_fetches == []
+
+
+async def test_unknown_symbol_is_rejected_before_any_agent_runs(pg_sessionmaker, user, fakes, monkeypatch):
+    await user()
+
+    async def no_price(symbol, session_factory=None, client=None):
+        return market_data.MarketUpdate(symbol, quote=None, rsi=None, snapshot_id=None)
+
+    monkeypatch.setattr(market_data, "update_market_snapshot", no_price)
+    with pytest.raises(UnknownSymbolError, match="ZZNODATA.NS"):
+        await run_analysis(1, "ZZNODATA", pg_sessionmaker)
+    assert fakes.calls == []
+
+
+async def test_stale_price_is_used_when_the_refresh_fails(pg_sessionmaker, user, fakes, monkeypatch):
+    await user()
+    async with pg_sessionmaker() as db:
+        db.add(MarketSnapshot(symbol="INFY.NS", price=Decimal(1500), source="yfinance",
+                              fetched_at=datetime.now(UTC) - timedelta(days=2)))
+        await db.commit()
+
+    async def no_price(symbol, session_factory=None, client=None):
+        return market_data.MarketUpdate(symbol, quote=None, rsi=None, snapshot_id=None)
+
+    monkeypatch.setattr(market_data, "update_market_snapshot", no_price)
+    result = await run_analysis(1, "INFY.NS", pg_sessionmaker)   # Yahoo down is not "unknown symbol"
+    assert result["statuses"]["market_agent"] == "ok"
 
 
 async def test_company_name_lookup_failure_is_not_fatal(pg_sessionmaker, user, fakes, monkeypatch):

@@ -21,6 +21,7 @@ from app.schemas.portfolio import (
     HoldingOut,
     HoldingUpdate,
     ImportReport,
+    PortfolioSummary,
     ZerodhaLoginUrl,
     ZerodhaStatus,
     ZerodhaSyncReport,
@@ -46,6 +47,16 @@ MANAGED_BY_SYNC = HTTPException(
 async def list_holdings(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """All holdings of the current user (manual and Zerodha-synced)."""
     return await portfolio_service.list_holdings(db, user.id)
+
+
+@router.get("/summary", response_model=PortfolioSummary)
+async def portfolio_summary(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """
+    Every holding valued at its latest market price (stocks) or at cost (no price / other
+    assets, flagged price_missing), with P/L, weights, totals, today's P/L and the
+    allocation by asset type.
+    """
+    return await portfolio_service.portfolio_summary(db, user.id)
 
 
 @router.post("/holdings", response_model=HoldingOut, status_code=status.HTTP_201_CREATED)

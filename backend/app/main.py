@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import check_db_connection, engine
 from app.core.scheduler import start_scheduler, stop_scheduler
-from app.routes import auth, chat, debug, health, portfolio, recommendations
+from app.routes import agents, auth, chat, debug, health, news, portfolio, profile, recommendations, security, system
 from app.services import vector_store
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(name)s - %(message)s")
@@ -73,6 +73,11 @@ app.include_router(auth.router)
 app.include_router(portfolio.router)
 app.include_router(recommendations.router)
 app.include_router(chat.router)
+app.include_router(news.router)
+app.include_router(profile.router)
+app.include_router(security.router)
+app.include_router(agents.router)
+app.include_router(system.router)
 
 # Developer-only tools (no login; localhost only). Never registered outside development.
 if settings.is_development:

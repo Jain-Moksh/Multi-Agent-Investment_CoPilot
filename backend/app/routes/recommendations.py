@@ -6,7 +6,8 @@ GET  /recommendations            the user's recent recommendations (optionally f
 
 A POST is expensive (five agents, market/news lookups, one or two LLM calls), so the
 same user can request the same symbol at most once per COOLDOWN; a repeat inside that
-window gets 429 with Retry-After.
+window gets 429 with Retry-After. A well-formed symbol for which no price exists at all
+(e.g. "ZZNODATA") gets 404 and no recommendation is stored.
 """
 
 import logging
@@ -17,10 +18,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.agents.recommendation_agent import RecommendationAgent
+from app.agents.orchestrator import UnknownSymbolError
+from app.agents.recommendation_agent import DISCLAIMER, RecommendationAgent, confidence_word
 from app.core.database import get_db, get_session_factory
 from app.core.dependencies import get_current_user
-from app.models import Recommendation, User
+from app.models import CompanyFundamentals, Recommendation, User
 from app.models.enums import AssetType
 from app.schemas.portfolio import normalize_symbol
 from app.schemas.recommendation import RecommendationOut, RecommendationSummary
@@ -68,7 +70,34 @@ async def create_recommendation(
                 f"A recommendation for {symbol} was just generated; try again in {int(wait.total_seconds()) + 1} s.",
                 headers={"Retry-After": str(int(wait.total_seconds()) + 1)},
             )
-    return await RecommendationAgent(session_factory).generate(user.id, symbol)
+    try:
+        return await RecommendationAgent(session_factory).generate(user.id, symbol)
+    except UnknownSymbolError as exc:  # no price anywhere: not a real ticker -> nothing is saved
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from None
+
+
+@router.get("/{recommendation_id}", response_model=RecommendationOut)
+async def get_recommendation(
+    recommendation_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    rec = await db.get(Recommendation, recommendation_id)
+    if rec is None or rec.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Recommendation not found")
+    details = rec.details or {}
+    agreement = details.get("agreement") or {}
+    company_name = await db.scalar(select(CompanyFundamentals.name).where(CompanyFundamentals.symbol == rec.symbol))
+    return RecommendationOut(
+        id=rec.id, symbol=rec.symbol, company_name=company_name, decision=rec.decision.value,
+        decision_label=details.get("decision_label") or rec.decision.value.capitalize(),
+        confidence=rec.confidence_score, confidence_level=confidence_word(rec.confidence_score),
+        overall_lean=rec.overall_lean or 0.0, explanation=rec.explanation,
+        explanation_source=details.get("explanation_source") or "unknown", main_driver=details.get("driver"),
+        conflicts=agreement.get("conflicts") or [], agents=details.get("agents") or {},
+        excluded=agreement.get("excluded") or {}, created_at=rec.created_at, disclaimer=DISCLAIMER,
+        details=details or None,
+    )
 
 
 @router.get("", response_model=list[RecommendationSummary])

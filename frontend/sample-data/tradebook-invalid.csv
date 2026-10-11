@@ -1,0 +1,3 @@
+symbol,trade_date,exchange,segment,trade_type,quantity,price,trade_id
+INFY,2025-01-15,NSE,EQ,hold,10,1850.50,T2001
+TCS,2025-02-10,NSE,EQ,buy,-5,4100.00,T2002

@@ -1,0 +1,4 @@
+symbol,isin,trade_date,exchange,segment,series,trade_type,auction,quantity,price,trade_id,order_id,order_execution_time
+INFY,INE009A01021,2025-01-15,NSE,EQ,EQ,buy,false,10,1850.50,T1001,O1,2025-01-15T09:30:12
+TCS,INE467B01029,2025-02-10,NSE,EQ,EQ,buy,false,5,4100.00,T1002,O2,2025-02-10T10:05:00
+NIFTY25FEB,,2025-02-11,NSE,FO,,buy,false,50,120.00,T1003,O3,2025-02-11T10:05:00

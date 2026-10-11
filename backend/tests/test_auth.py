@@ -133,3 +133,35 @@ async def test_logout_revokes_refresh_token(client):
 
 async def test_refresh_without_cookie(client):
     assert (await client.post("/auth/refresh")).status_code == 401
+
+# ---------------- rate limits (audit finding: no protection against password guessing) ----------------
+
+async def test_login_is_locked_after_5_failures_for_that_email(client):
+    await signup(client)
+    for _ in range(5):
+        assert (await login(client, password="wrong-password")).status_code == 401
+    r = await login(client)                                   # even the right password is refused for now
+    assert r.status_code == 429 and int(r.headers["Retry-After"]) > 0
+    assert (await login(client, email="other@example.com", password="x" * 8)).status_code == 401  # other emails unaffected
+
+
+async def test_successful_login_resets_the_failure_count(client):
+    await signup(client)
+    for _ in range(4):
+        await login(client, password="wrong-password")
+    assert (await login(client)).status_code == 200
+    for _ in range(4):
+        assert (await login(client, password="wrong-password")).status_code == 401   # counting starts again
+
+
+async def test_failures_across_many_emails_from_one_ip_are_limited(client):
+    for i in range(20):
+        assert (await login(client, email=f"guess{i}@example.com", password="password-1")).status_code == 401
+    assert (await login(client, email="guess99@example.com", password="password-1")).status_code == 429
+
+
+async def test_signups_per_ip_are_limited(client):
+    for i in range(10):
+        assert (await signup(client, email=f"user{i}@example.com")).status_code == 201
+    r = await signup(client, email="user10@example.com")
+    assert r.status_code == 429 and "sign-ups" in r.json()["detail"]

@@ -65,6 +65,12 @@ TRUSTED_DOMAINS: frozenset[str] = frozenset({
     "thehindubusinessline.com", "financialexpress.com", "cnbctv18.com", "ndtvprofit.com",
     "businesstoday.in", "thehindu.com", "indianexpress.com", "timesofindia.indiatimes.com",
     "hindustantimes.com", "ndtv.com", "zeebiz.com",
+    # established national / regional newspapers and news sites. Added after the 2026-10-10 audit:
+    # a genuine story syndicated on tribuneindia.com, deccanchronicle.com and udayavani.com was
+    # quarantined as a "coordinated fake" because none of them was listed.
+    "tribuneindia.com", "deccanchronicle.com", "deccanherald.com", "udayavani.com", "news18.com", "indiatoday.in",
+    "firstpost.com", "outlookindia.com", "outlookbusiness.com", "thestatesman.com", "telegraphindia.com",
+    "newindianexpress.com", "marketwatch.com",
     # exchanges, regulators, official sources
     "nseindia.com", "bseindia.com", "sebi.gov.in", "rbi.org.in", "pib.gov.in", "sec.gov",
 })

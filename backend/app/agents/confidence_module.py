@@ -76,8 +76,8 @@ BEARISH_FACTOR = {"conservative": 1.5, "moderate": 1.0, "aggressive": 0.75}
 DEFAULT_RISK, DEFAULT_HORIZON = "moderate", "medium_term"
 
 # Statuses meaning "this agent has no usable opinion" (its signal is a placeholder 0).
-DEGRADED_STATUSES = {"error", "timeout", "no_data", "no_news", "llm_unavailable", "invalid_llm_output",
-                     "insufficient_history"}
+DEGRADED_STATUSES = {"error", "timeout", "no_data", "no_news", "no_relevant_news", "llm_unavailable",
+                     "invalid_llm_output", "insufficient_history"}
 CONFLICT_MIN_LEAN = 0.2
 
 LABELS = {"news_agent": "News", "market_agent": "Market trend", "portfolio_agent": "Your portfolio",

@@ -8,12 +8,23 @@ How to use: change `[ ]` to `[x]` when a step is done.
 
 ## Next
 
-- [x] Backend audit done: the full report is at the bottom of `test.md` (below the line "---- tell ur test output -----")
-- [ ] Give `test.md` to the other Claude and tell me what it says
-- [ ] Say "fix the audit findings" → I fix the top issues first (LLM fallback per model, chat SUSPICIOUS handling, News Agent confidence, symbol check) — about 6 items, list is at the end of `test.md`
-- [ ] Say "start the frontend" → React app on top of this backend
+- [x] Backend audit done (findings summary in `context.md`)
+- [x] The 6 audit fixes done (AI fallback per model, attack filter, chat refusal when the safety check is down, News Agent confidence, unknown tickers + prices for any stock, login limits + trusted news list) — 605 tests pass
+- [ ] Run through `guide.md` once yourself (how to start, demo steps, troubleshooting)
+- [x] Backend endpoints for the frontend added (news, portfolio summary, profile, security, agent logs, system status) — 636 tests pass
+- [ ] Restart the backend server (if it is running) so the new endpoints are loaded
+- [x] Dashboard page built and checked in a browser
+- [ ] Open the Dashboard yourself with your own account (commands in Claude's reply)
+- [x] AI Insights page built and checked in a browser (held + not-held stock, history re-open)
+- [ ] Restart the backend so the new `details` field and `GET /recommendations/{id}` are loaded
+- [x] Opportunities, Notifications and System Check pages built and checked in a browser
+- [ ] Decide if/when to build the backend Opportunity Scanner and Notifications (the pages already handle "not built")
+- [x] Frontend final pass done (session expiry message, phone layout fixes, README, clean build, full smoke test)
+- [ ] Run the frontend once yourself: `npm install` then `npm run dev` in `frontend/`, open http://localhost:5173
+- [ ] Optional: see the "session expired" message yourself. Log in, open DevTools → Application → Cookies → `http://localhost:8000`, delete `refresh_token`, wait 30 minutes, then click any page
+- [ ] Connect a real Zerodha account once (could not be tested without your login)
 
-Good to know from the audit: the free Gemini keys allow only about 20 requests per day per model per key, so the AI parts may stop mid-demo until the fix; adding credit to OpenAI (Optional list) would give a safe backup.
+Good to know: the free Gemini keys allow only about 20 AI requests per day per model per key (the app now uses the other models automatically when one runs out); adding credit to OpenAI (Optional list) would give a safe backup for demos.
 
 ---
 

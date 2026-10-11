@@ -13,9 +13,13 @@ Graph:
                       +--> user_profiling_agent --------+
                       +--> fundamental_economic_agent --+
 
-  prepare    checks the user exists, normalises the symbol, and looks up the company
-             name once (the News Agent searches better with "Infosys" than "INFY"; it
-             also warms the fundamentals cache the Fundamental Agent reads).
+  prepare    checks the user exists, makes sure there is FRESH market data for the symbol
+             (the scheduler only collects prices for held stocks, so for any other stock the
+             price/history/RSI are fetched now) and rejects symbols for which no price exists
+             at all (UnknownSymbolError -> HTTP 404, nothing saved). Then it looks up the
+             company name once (the News Agent searches better with "Infosys" than "INFY"; it
+             also warms the fundamentals cache the Fundamental Agent reads). These are
+             system-level data refreshes of public market data, like the scheduler's jobs.
   5 agents   independent of each other, so LangGraph runs them in the same step,
              concurrently (asyncio). Each writes only its own key into the shared state.
   aggregate  waits for all five, then assembles the combined result.
@@ -31,10 +35,11 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents.fundamental_economic_agent import FundamentalEconomicAgent
@@ -43,15 +48,41 @@ from app.agents.news_agent import NewsAgent
 from app.agents.portfolio_agent import PortfolioAgent
 from app.agents.user_profiling_agent import UserProfilingAgent
 from app.core.database import AsyncSessionLocal
-from app.models import User
+from app.models import MarketSnapshot, User
 from app.models.enums import AssetType
 from app.schemas.portfolio import normalize_symbol
 from app.services import fundamentals as fundamentals_service
+from app.services import market_data
 
 logger = logging.getLogger(__name__)
 
 AGENT_NAMES = ("news_agent", "market_agent", "portfolio_agent", "user_profiling_agent", "fundamental_economic_agent")
 AGENT_TIMEOUT = 90.0  # seconds per agent; the News Agent's LLM call is the slowest part
+# A stored price younger than this is used as is; older (or none) -> fetched on demand.
+# Matches the scheduler's market job interval, so held stocks are normally not re-fetched.
+MARKET_DATA_MAX_AGE = timedelta(minutes=30)
+
+
+class UnknownSymbolError(ValueError):
+    """No price could be found for the symbol (not a listed ticker, or every price source is down)."""
+
+
+async def ensure_market_data(symbol: str, session_factory: async_sessionmaker[AsyncSession]) -> bool:
+    """
+    Make sure `symbol` has a recent market_snapshots row, fetching price, daily history and
+    RSI now if needed. Returns False only when no price exists at all (nothing stored and
+    the fetch failed). A stale stored price is still accepted if the fetch fails.
+    """
+    async with session_factory() as db:
+        latest = await db.scalar(select(func.max(MarketSnapshot.fetched_at)).where(MarketSnapshot.symbol == symbol))
+    if latest is not None:
+        latest = latest if latest.tzinfo else latest.replace(tzinfo=UTC)
+        if datetime.now(UTC) - latest < MARKET_DATA_MAX_AGE:
+            return True
+    update = await market_data.update_market_snapshot(symbol, session_factory)
+    if update.quote is None and latest is not None:
+        logger.warning("[orchestrator] could not refresh %s; using the stored price from %s", symbol, latest)
+    return update.quote is not None or latest is not None
 
 
 def _merge(left: dict[str, Any] | None, right: dict[str, Any] | None) -> dict[str, Any]:
@@ -105,6 +136,11 @@ def build_graph(session_factory: async_sessionmaker[AsyncSession] = AsyncSession
         async with session_factory() as db:
             if await db.get(User, state["user_id"]) is None:
                 raise UnknownUserError(f"user {state['user_id']} does not exist")
+        if not await ensure_market_data(state["symbol"], session_factory):
+            raise UnknownSymbolError(
+                f"No market data found for {state['symbol']}: it is not a listed NSE/BSE ticker, "
+                "or the price sources are unreachable right now."
+            )
         company_name = None
         try:  # system-level lookup (public data); a failure just means the ticker is used instead
             row = await fundamentals_service.refresh_if_stale(state["symbol"], session_factory)

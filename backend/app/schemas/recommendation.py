@@ -11,6 +11,7 @@ class AgentView(BaseModel):
     signal: float | None
     confidence: float | None
     summary: str | None
+    facts: dict[str, Any] | None = None
 
 
 class RecommendationOut(BaseModel):
@@ -32,6 +33,7 @@ class RecommendationOut(BaseModel):
     excluded: dict[str, str]        # agents whose evidence was unavailable, and why
     created_at: datetime
     disclaimer: str
+    details: dict[str, Any] | None = None
 
 
 class RecommendationSummary(BaseModel):

@@ -8,8 +8,9 @@ change, not a code change. Clients are created lazily, once per key, and reused.
 Fallback order: provider LLM_PROVIDER first, then (LLM_CROSS_PROVIDER_FALLBACK)
 the other one; within a provider each model of GEMINI_MODEL / OPENAI_MODEL
 (comma-separated) in order, and for each model every usable key in order.
-- rate limit / quota / invalid key -> that key rests for a while
-  (app/services/key_pool.py) and the next key is tried;
+- rate limit / quota -> that key rests for a while FOR THAT MODEL only (Gemini counts
+  quota per key and model, so the same key is still tried on the next model);
+  invalid key -> the key rests for every model (app/services/key_pool.py);
 - server error (5xx) or timeout -> the model is overloaded or down, so the
   next MODEL is tried (other keys would hit the same overloaded model);
 - empty reply / other errors -> next key.
@@ -166,7 +167,7 @@ async def complete(system: str, user: str, *, max_tokens: int = 1024, json_mode:
         for name in order:
             call = _complete_gemini if name == "gemini" else _complete_openai
             for model in models(name):
-                for key in key_pool.usable_keys(name):
+                for key in key_pool.usable_keys(name, scope=model):
                     label = f"{name} {model} key {key_pool.mask(key)}"
                     model_down = False
                     try:
@@ -183,12 +184,12 @@ async def complete(system: str, user: str, *, max_tokens: int = 1024, json_mode:
                         model_down = status is not None and status >= 500
                     else:
                         if text.strip():
-                            key_pool.report_success(name, key)
+                            key_pool.report_success(name, key, scope=model)
                             if failures:
                                 logger.info("[llm] answered by %s after %d failed attempt(s)", label, len(failures))
                             return text.strip()
                         error, kind = f"{label} returned an empty response", key_pool.Failure.OTHER
-                    key_pool.report_failure(name, key, kind, error)
+                    key_pool.report_failure(name, key, kind, error, scope=model)
                     failures.append(error)
                     if model_down:
                         # Overloaded / down / too slow: the same model on another key would fail

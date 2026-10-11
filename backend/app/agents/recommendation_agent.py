@@ -108,6 +108,25 @@ def main_driver(agreement: dict[str, Any], agents: dict[str, Any]) -> dict[str, 
             "summary": (agents.get(agent) or {}).get("summary") or ""}
 
 
+FACT_KEYS = {
+    "news_agent": ("sentiment", "severity"),
+    "market_agent": ("trend", "rsi", "rsi_signal", "price", "pct_vs_ma7"),
+    "portfolio_agent": ("held", "unrealized_pl_pct", "position_weight_pct", "concentration_risk"),
+    "user_profiling_agent": ("risk_appetite", "investment_horizon"),
+    "fundamental_economic_agent": ("valuation",),
+}
+
+
+def agent_facts(agent: str, output: dict[str, Any]) -> dict[str, Any]:
+    facts = {key: output[key] for key in FACT_KEYS.get(agent, ()) if output.get(key) is not None}
+    if agent == "news_agent" and "articles" in output:
+        facts.update(articles=len(output.get("articles") or []), cited_articles=len(output.get("cited_article_ids") or []))
+    if agent == "fundamental_economic_agent":
+        company = output.get("company") or {}
+        facts.update({key: company[key] for key in ("pe_ratio", "sector") if company.get(key) is not None})
+    return facts
+
+
 def first_sentence(text: str) -> str:
     """'A (P/E 13.3) is cheap. Macro news ...' -> 'A (P/E 13.3) is cheap.' (decimals don't split)."""
     return re.split(r"(?<=[.!?])\s+(?=[A-Z])", text.strip(), maxsplit=1)[0]
@@ -213,7 +232,7 @@ class RecommendationAgent(BaseAgent):
                 "agreement": {k: agreement[k] for k in ("agreement", "evidence", "leans", "weights", "excluded",
                                                          "conflicts", "profile")},
                 "agents": {a: {"status": o.get("status"), "signal": o.get("signal"), "confidence": o.get("confidence"),
-                               "summary": o.get("summary")} for a, o in agents.items()},
+                               "summary": o.get("summary"), "facts": agent_facts(a, o)} for a, o in agents.items()},
                 "agent_errors": analysis["errors"], "timings_ms": analysis["timings_ms"],
                 "explanation_source": source,
             }
@@ -227,7 +246,7 @@ class RecommendationAgent(BaseAgent):
                 "overall_lean": round(lean, 4), "explanation": explanation, "explanation_source": source,
                 "main_driver": driver, "conflicts": agreement["conflicts"], "company_name": analysis.get("company_name"),
                 "agents": details["agents"], "excluded": agreement["excluded"],
-                "created_at": rec.created_at.isoformat(), "disclaimer": DISCLAIMER,
+                "created_at": rec.created_at.isoformat(), "disclaimer": DISCLAIMER, "details": details,
             })
             return result
         except Exception as exc:

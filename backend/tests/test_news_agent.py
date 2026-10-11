@@ -78,6 +78,22 @@ def test_compute_confidence():
     assert compute_confidence([article(1)], [1]) == 0.47  # 0.3 + 0.7 * 0.25 = 0.475 (float rounds down)
     assert compute_confidence([article(i) for i in range(4)], [0, 1, 2, 3]) == 1.0
     assert compute_confidence([article(i, "untrusted") for i in range(4)], [0, 1, 2, 3]) == 0.72
+    # Nothing cited = the articles were not about the stock -> no evidence (audit: was 0.79 before).
+    assert compute_confidence([article(i) for i in range(8)], []) == 0.0
+    assert compute_confidence([article(1)], [999]) == 0.0
+
+
+async def test_irrelevant_articles_give_no_relevant_news(pg_sessionmaker, fake_retrieval, monkeypatch):
+    monkeypatch.setattr(llm, "complete", FakeLLM(verdict_json(
+        sentiment="neutral", severity="low", summary="None of the articles are about this stock.",
+        cited_article_ids=[], article_sentiments=[])))
+    result = await NewsAgent(pg_sessionmaker).analyze("ZZNODATA.NS")
+    assert (result["status"], result["signal"], result["confidence"]) == ("no_relevant_news", 0.0, 0.0)
+    assert result["summary"] == "None of the articles are about this stock."
+
+    from app.agents.confidence_module import compute_agreement
+    agreement = compute_agreement({"news_agent": result})
+    assert agreement["excluded"]["news_agent"] == "status no_relevant_news"   # not counted as a neutral vote
 
 
 @pytest.mark.parametrize(

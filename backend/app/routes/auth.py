@@ -10,10 +10,11 @@ Token strategy:
     (rotation).
 """
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import rate_limit
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
@@ -54,18 +55,32 @@ async def _start_session(db: AsyncSession, response: Response, user_id: int) -> 
     return _token_response(user_id)
 
 
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def _too_many(seconds: int, what: str) -> HTTPException:
+    return HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, f"Too many {what}; try again in {seconds} s.",
+                         headers={"Retry-After": str(seconds)})
+
+
 @router.post("/signup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def signup(body: SignupRequest, response: Response, db: AsyncSession = Depends(get_db)):
-    """Create an account and log the user in immediately."""
+async def signup(body: SignupRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    """Create an account and log the user in immediately. Limited to 10 accounts per IP per hour."""
+    ip_key = _client_ip(request)
+    if wait := rate_limit.SIGNUPS_PER_IP.retry_after(ip_key):
+        raise _too_many(wait, "sign-ups from this address")
     try:
         user = await auth_service.create_user(db, body.email, body.password)
     except auth_service.EmailAlreadyRegistered:
         raise HTTPException(status.HTTP_409_CONFLICT, "Email is already registered") from None
+    rate_limit.SIGNUPS_PER_IP.hit(ip_key)
     return await _start_session(db, response, user.id)
 
 
 @router.post("/login", response_model=TokenResponse)
 async def login(
+    request: Request,
     response: Response,
     form: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
@@ -73,14 +88,24 @@ async def login(
     """
     OAuth2 password flow: send form fields `username` (= your email) and `password`
     as application/x-www-form-urlencoded. This is what Swagger's Authorize button uses.
+    After 5 failed attempts for one email (or 20 from one IP) within 15 minutes, further
+    attempts get 429 until the window passes; a successful login clears the email's count.
     """
+    email_key, ip_key = form.username.strip().lower(), _client_ip(request)
+    wait = max(rate_limit.LOGIN_FAILURES_PER_EMAIL.retry_after(email_key),
+               rate_limit.LOGIN_FAILURES_PER_IP.retry_after(ip_key))
+    if wait:
+        raise _too_many(wait, "failed login attempts")
     user = await auth_service.authenticate_user(db, form.username, form.password)
     if user is None:
+        rate_limit.LOGIN_FAILURES_PER_EMAIL.hit(email_key)
+        rate_limit.LOGIN_FAILURES_PER_IP.hit(ip_key)
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
             "Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    rate_limit.LOGIN_FAILURES_PER_EMAIL.reset(email_key)
     return await _start_session(db, response, user.id)
 
 

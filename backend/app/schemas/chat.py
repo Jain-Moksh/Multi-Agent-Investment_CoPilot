@@ -25,7 +25,7 @@ class ChatSecurity(BaseModel):
 class ChatReply(BaseModel):
     conversation_id: str
     reply: str
-    status: str                     # ok | refused | llm_unavailable | blocked_output
+    status: str                     # ok | refused | refused_unverified | llm_unavailable | blocked_output
     mode: str                       # symbol | general | refused
     detected_symbols: list[str]     # held stocks recognised in the message
     security: ChatSecurity

@@ -75,7 +75,10 @@ async def classify_text_llm(text: str) -> dict[str, str]:
         reply = await llm.complete(SYSTEM_PROMPT, build_user_message(text), max_tokens=1024)
     except llm.LLMError as exc:
         logger.warning("LLM injection classifier unavailable: %s", exc)
-        return {"verdict": SUSPICIOUS, "reason": f"LLM classifier unavailable ({exc}); kept as SUSPICIOUS"}
+        # `classifier_unavailable` lets callers that must not take risks (the chat) refuse
+        # instead of treating "could not check" like an ordinary SUSPICIOUS verdict.
+        return {"verdict": SUSPICIOUS, "reason": f"LLM classifier unavailable ({exc}); kept as SUSPICIOUS",
+                "classifier_unavailable": True}
     return parse_verdict(reply)
 
 
@@ -88,6 +91,7 @@ async def scan_content(text: str | None) -> dict[str, Any]:
         "reason": str,                       # stored in security_reason
         "matched_patterns": [...],           # from the rule stage
         "stage": "rules" | "llm",            # which stage decided
+        "classifier_unavailable": bool,      # only when stage == "llm"
     }
     """
     rules = scan_text_rules(text)
@@ -101,4 +105,6 @@ async def scan_content(text: str | None) -> dict[str, Any]:
         "reason": f"rules matched [{patterns}]; LLM: {llm_result['reason']}",
         "matched_patterns": rules["matched_patterns"],
         "stage": "llm",
+        # True = the rules flagged the text but the LLM could not judge it (no key, quota, timeout).
+        "classifier_unavailable": bool(llm_result.get("classifier_unavailable")),
     }

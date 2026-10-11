@@ -74,6 +74,46 @@ class ImportReport(BaseModel):
     date_range: tuple[date, date] | None
 
 
+class HoldingSummary(BaseModel):
+    id: int
+    symbol: str
+    asset_type: AssetType
+    source: TransactionSource
+    quantity: float
+    avg_buy_price: float
+    current_price: float | None        # latest market_snapshots price; null if none (and for non-stock assets)
+    price_as_of: datetime | None
+    change_pct: float | None           # today's % change from that snapshot
+    invested_value: float
+    current_value: float               # = invested_value when the price is missing
+    unrealized_pl: float | None        # null when the price is missing
+    unrealized_pl_pct: float | None
+    weight_pct: float | None           # share of total_current_value
+    price_missing: bool
+
+
+class PortfolioTotals(BaseModel):
+    total_invested: float
+    total_current_value: float
+    total_pl: float                    # holdings without a price count as 0 P/L
+    total_pl_pct: float | None
+    todays_pl: float | None            # from each snapshot's change_pct; null if no holding has one
+
+
+class AllocationSlice(BaseModel):
+    asset_type: AssetType
+    value: float                       # current value of all holdings of this type
+    percent: float | None
+
+
+class PortfolioSummary(BaseModel):
+    holdings: list[HoldingSummary]
+    totals: PortfolioTotals
+    allocation: list[AllocationSlice]
+    priced_holdings: int               # holdings that have a current price
+    holdings_count: int
+
+
 class ZerodhaLoginUrl(BaseModel):
     login_url: str
 

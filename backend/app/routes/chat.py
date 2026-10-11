@@ -21,6 +21,10 @@ Per message:
   2. BLOCKED    -> stored + security_logs (HIGH, blocked) + polite refusal; the
                    assistant LLM is NOT called, and the message never enters future history
      SUSPICIOUS -> stored + security_logs (MEDIUM, not blocked) + answered normally
+                   BUT if the rules flagged it and the LLM classifier could not judge it
+                   (no key / quota / timeout), it is refused like BLOCKED (status
+                   "refused_unverified"): an unchecked, rule-flagged message never reaches
+                   the assistant LLM (fail closed)
      SAFE       -> answered
   3. answer with the AssistantAgent (history = last messages, BLOCKED ones excluded):
        SAFE + mentions a held stock -> symbol mode: news + latest recommendation +
@@ -57,6 +61,9 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 MAX_MESSAGES_PER_MINUTE = 15
 REFUSAL = ("I can't help with that message. It looks like it contains instructions aimed at the assistant itself "
            "rather than a question about your investments. Please rephrase your question and I'll be happy to help.")
+UNVERIFIED_REFUSAL = ("I can't answer that message right now: it contains wording our safety check needs to review, "
+                      "and the check is temporarily unavailable. Please rephrase your question or try again in a minute.")
+REFUSALS = (REFUSAL, UNVERIFIED_REFUSAL)
 
 
 def _security_log(event: SecurityEventType, severity: Severity, blocked: bool, details: dict[str, Any]) -> SecurityLog:
@@ -110,32 +117,40 @@ async def send_message(
     log_details = {"user_id": user.id, "conversation_id": conversation.id, "verdict": verdict, "stage": scan["stage"],
                    "matched_patterns": scan["matched_patterns"], "reason": scan["reason"], "message": message[:300]}
 
-    # ---- 2a. BLOCKED: refuse without calling the assistant LLM ----
+    # ---- 2a. BLOCKED, or flagged but unverifiable: refuse without calling the assistant LLM ----
     answer: dict[str, Any] = {"mode": "refused", "detected_symbols": [], "sources": [], "context": {}}
+    unverified = verdict == SUSPICIOUS and bool(scan.get("classifier_unavailable"))
     if verdict == BLOCKED:
         logger.warning("[chat] BLOCKED message from user %s: %s", user.id, scan["reason"])
         db.add(_security_log(SecurityEventType.PROMPT_INJECTION, Severity.HIGH, True, log_details))
         reply_text, reply_status, sources = REFUSAL, "refused", []
+    elif unverified:
+        logger.warning("[chat] flagged message from user %s refused: classifier unavailable: %s", user.id, scan["reason"])
+        db.add(_security_log(SecurityEventType.PROMPT_INJECTION, Severity.HIGH, True,
+                             {**log_details, "kind": "unverified_refused"}))
+        reply_text, reply_status, sources = UNVERIFIED_REFUSAL, "refused_unverified", []
     else:
         if verdict == SUSPICIOUS:
             logger.warning("[chat] SUSPICIOUS message from user %s answered: %s", user.id, scan["reason"])
             db.add(_security_log(SecurityEventType.PROMPT_INJECTION, Severity.MEDIUM, False, log_details))
 
-        # ---- 3. answer, with history (oldest first, BLOCKED messages and their refusals excluded) ----
+        # ---- 3. answer, with history (oldest first; refused messages and their refusals excluded) ----
         rows = (await db.scalars(
             select(ChatMessage).where(ChatMessage.conversation_id == conversation.id)
             .order_by(ChatMessage.id.desc()).limit(40)
         )).all()
-        history: list[tuple[str, str]] = []
-        skip_next_refusal = False
-        for row in reversed([r for r in rows if r is not user_msg]):
-            if row.role == "user" and row.security_status == SecurityStatus.BLOCKED:
-                skip_next_refusal = True
-                continue
-            if row.role == "assistant" and skip_next_refusal:
-                skip_next_refusal = False
-                continue
-            history.append((row.role, row.content))
+        chronological = list(reversed([r for r in rows if r is not user_msg]))
+        skip: set[int] = set()
+        for i, row in enumerate(chronological):
+            reply_row = chronological[i + 1] if i + 1 < len(chronological) else None
+            refused = reply_row is not None and reply_row.role == "assistant" and reply_row.content in REFUSALS
+            if row.role == "user" and (row.security_status == SecurityStatus.BLOCKED
+                                       or (row.security_status == SecurityStatus.SUSPICIOUS and refused)):
+                skip.add(i)
+                if refused:
+                    skip.add(i + 1)
+        history: list[tuple[str, str]] = [(row.role, row.content) for i, row in enumerate(chronological)
+                                          if i not in skip]
 
         # Only SAFE messages get stock-specific lookups (news, recommendation, portfolio analysis);
         # a SUSPICIOUS one gets a general answer so it can't pull extra data into the context.

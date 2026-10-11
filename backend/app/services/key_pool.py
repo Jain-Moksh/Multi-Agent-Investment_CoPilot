@@ -10,6 +10,11 @@ it failed:
 - OTHER (timeout, server error, bad request): no rest, just try the next key
 A success clears the key's record. State lives in memory (resets on restart), which is
 enough for a single server process. Keys are only ever logged masked (last 4 chars).
+
+Scope: providers like Gemini count quota per (key, model), so a key that is out of quota
+for one model may still work for another. Callers pass `scope` (the model name):
+RATE_LIMIT / QUOTA rests only that (key, scope); AUTH (a bad key) rests the key for every
+scope. Without `scope` (Marketaux, Alpha Vantage) a rest applies to the whole key.
 """
 
 import logging
@@ -39,7 +44,8 @@ class _KeyState:
     strikes: int = 0
 
 
-_state: dict[tuple[str, str], _KeyState] = {}
+ALL_SCOPES = ""  # a rest stored under this scope applies to every scope of the key
+_state: dict[tuple[str, str, str], _KeyState] = {}  # (service, key, scope) -> rest
 
 _AUTH_HINTS = ("api key not valid", "api_key_invalid", "invalid api key", "incorrect api key", "invalid_api_key",
                "invalid_api_token", "invalid authentication", "permission denied")
@@ -67,38 +73,49 @@ def classify(status: int | None, message: str) -> Failure:
     return Failure.OTHER
 
 
-def usable_keys(service: str) -> list[str]:
-    """The service's keys in their configured order, minus the ones currently resting."""
+def _resting(service: str, key: str, scope: str, now: datetime) -> bool:
+    for s in {ALL_SCOPES, scope}:
+        state = _state.get((service, key, s))
+        if state is not None and now < state.resting_until:
+            return True
+    return False
+
+
+def usable_keys(service: str, scope: str | None = None) -> list[str]:
+    """The service's keys in their configured order, minus the ones resting for `scope` (or for all scopes)."""
     now = datetime.now(UTC)
-    return [key for key in settings.api_keys(service)
-            if (state := _state.get((service, key))) is None or now >= state.resting_until]
+    return [key for key in settings.api_keys(service) if not _resting(service, key, scope or ALL_SCOPES, now)]
 
 
 def next_free_at(service: str) -> datetime | None:
     """When the first resting key of `service` becomes usable again (None if none is resting)."""
-    times = [s.resting_until for (svc, _), s in _state.items() if svc == service]
+    times = [s.resting_until for (svc, _, _), s in _state.items() if svc == service]
     return min(times) if times else None
 
 
-def report_success(service: str, key: str) -> None:
-    _state.pop((service, key), None)
+def report_success(service: str, key: str, scope: str | None = None) -> None:
+    _state.pop((service, key, scope or ALL_SCOPES), None)
 
 
-def report_failure(service: str, key: str, kind: Failure, detail: str = "") -> None:
+def report_failure(service: str, key: str, kind: Failure, detail: str = "", scope: str | None = None) -> None:
     position = _position(service, key)
+    where = f" for {scope}" if scope and kind is not Failure.AUTH else ""
     if kind is Failure.OTHER:
-        logger.warning("[%s] key %s %s failed (%s); trying the next key", service, position, mask(key), detail[:200])
+        logger.warning("[%s] key %s %s failed%s (%s); trying the next option", service, position, mask(key), where,
+                       detail[:200])
         return
+    # A bad key is bad for every model; a rate limit / quota only for the model that hit it.
+    slot = (service, key, ALL_SCOPES if kind is Failure.AUTH else (scope or ALL_SCOPES))
     now = datetime.now(UTC)
-    state = _state.get((service, key))
+    state = _state.get(slot)
     strikes = (state.strikes if state else 0) + 1
     if kind is Failure.RATE_LIMIT:
         rest = min(RATE_LIMIT_REST * 2 ** (strikes - 1), RATE_LIMIT_MAX_REST)
     else:
         rest = LONG_REST
-    _state[(service, key)] = _KeyState(resting_until=now + rest, strikes=strikes)
-    logger.warning("[%s] key %s %s: %s - skipping it for %s and using the next key. %s",
-                   service, position, mask(key), kind.value, rest, detail[:200])
+    _state[slot] = _KeyState(resting_until=now + rest, strikes=strikes)
+    logger.warning("[%s] key %s %s: %s%s - skipping it for %s and using the next option. %s",
+                   service, position, mask(key), kind.value, where, rest, detail[:200])
 
 
 def reset() -> None:

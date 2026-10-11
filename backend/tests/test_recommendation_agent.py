@@ -264,10 +264,64 @@ async def test_post_get_cooldown_and_isolation(pg_client, fake_pipeline):
     assert len((await pg_client.get("/recommendations?symbol=TCS", headers=alice)).json()) == 0
 
 
+async def test_post_returns_details_and_get_by_id_reopens_it(pg_client, fake_pipeline):
+    alice = await signup_headers(pg_client, "alice@example.com")
+    bob = await signup_headers(pg_client, "bob@example.com")
+    body = (await pg_client.post("/recommendations/INFY", headers=alice)).json()
+
+    details = body["details"]
+    assert set(details) >= {"decision_label", "holds_stock", "driver", "thresholds", "agreement", "agents",
+                            "agent_errors", "timings_ms", "explanation_source"}
+    assert set(details["agreement"]) == {"agreement", "evidence", "leans", "weights", "excluded", "conflicts", "profile"}
+    assert details["thresholds"] == {"buy": 0.3, "sell": -0.3, "min_confidence": 0.35}
+    assert details["timings_ms"] == {"total": 1234}
+    assert body["agents"]["user_profiling_agent"]["facts"] == {"risk_appetite": "moderate",
+                                                              "investment_horizon": "medium_term"}
+
+    saved = await pg_client.get(f"/recommendations/{body['id']}", headers=alice)
+    assert saved.status_code == 200
+    again = saved.json()
+    for key in ("id", "symbol", "decision", "decision_label", "confidence", "overall_lean", "explanation",
+                "explanation_source", "conflicts", "excluded", "agents", "details", "disclaimer"):
+        assert again[key] == body[key], key
+    assert again["confidence_level"] == body["confidence_level"]
+
+    assert (await pg_client.get(f"/recommendations/{body['id']}", headers=bob)).status_code == 404
+    assert (await pg_client.get("/recommendations/999999", headers=alice)).status_code == 404
+    assert (await pg_client.get(f"/recommendations/{body['id']}")).status_code == 401
+
+
+def test_agent_facts():
+    assert ra.agent_facts("market_agent", {"trend": "down", "rsi": 34.7, "rsi_signal": "neutral", "price": 1170.3,
+                                           "pct_vs_ma7": -1.5, "ma7": 1188}) == \
+        {"trend": "down", "rsi": 34.7, "rsi_signal": "neutral", "price": 1170.3, "pct_vs_ma7": -1.5}
+    assert ra.agent_facts("fundamental_economic_agent", {"valuation": "fair", "company": {"pe_ratio": 21.2,
+                                                         "sector": "Energy", "eps": 55}}) == \
+        {"valuation": "fair", "pe_ratio": 21.2, "sector": "Energy"}
+    assert ra.agent_facts("news_agent", {"sentiment": "neutral", "severity": "low", "articles": [1, 2, 3],
+                                         "cited_article_ids": [2]}) == \
+        {"sentiment": "neutral", "severity": "low", "articles": 3, "cited_articles": 1}
+    assert ra.agent_facts("portfolio_agent", {"status": "error"}) == {}
+
+
 @pytest.mark.parametrize("bad", ["INFY;DROP", "a" * 30, "INFY.XX", "..", "%20"])
 async def test_invalid_symbols_are_rejected(pg_client, fake_pipeline, bad):
     headers = await signup_headers(pg_client)
     assert (await pg_client.post(f"/recommendations/{bad}", headers=headers)).status_code in (404, 422)
+
+
+async def test_unknown_symbol_gets_404_and_nothing_is_saved(pg_client, pg_sessionmaker, monkeypatch):
+    from app.services import market_data
+
+    async def no_price(symbol, session_factory=None, client=None):
+        return market_data.MarketUpdate(symbol, quote=None, rsi=None, snapshot_id=None)
+
+    monkeypatch.setattr(market_data, "update_market_snapshot", no_price)
+    headers = await signup_headers(pg_client)
+    r = await pg_client.post("/recommendations/ZZNODATA", headers=headers)
+    assert r.status_code == 404 and "No market data found for ZZNODATA.NS" in r.json()["detail"]
+    async with pg_sessionmaker() as db:
+        assert await db.scalar(select(func.count()).select_from(Recommendation)) == 0
 
 
 # ---------------- end to end through the API with the five REAL agents ----------------
