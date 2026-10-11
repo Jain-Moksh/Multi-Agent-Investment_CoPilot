@@ -38,7 +38,7 @@ function DetailValue({ value }) {
     )
   }
   return (
-    <pre className="overflow-x-auto rounded-lg bg-slate-900 p-3 text-xs leading-relaxed text-slate-100">
+    <pre className="overflow-x-auto rounded-lg bg-[#0f172a] p-3 text-xs leading-relaxed text-[#f1f5f9]">
       {JSON.stringify(value, null, 2)}
     </pre>
   )

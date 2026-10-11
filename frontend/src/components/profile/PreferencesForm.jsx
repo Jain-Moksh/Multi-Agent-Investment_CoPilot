@@ -34,7 +34,17 @@ function validateAmount(raw) {
   return ''
 }
 
-export default function PreferencesForm({ profile, onSaved }) {
+const DEFAULT_NOTE = 'Changes take effect the next time the system classifies you, for example on your next analysis.'
+
+export default function PreferencesForm({
+  profile,
+  onSaved,
+  title = 'Your preferences',
+  submitLabel = 'Save preferences',
+  successMessage = 'Preferences saved.',
+  note = DEFAULT_NOTE,
+  onSkip,
+}) {
   const toast = useToast()
   const [form, setForm] = useState(() => initialForm(profile))
   const [amountError, setAmountError] = useState('')
@@ -62,7 +72,7 @@ export default function PreferencesForm({ profile, onSaved }) {
       })
       onSaved(saved)
       setForm(initialForm(saved))
-      toast.success('Preferences saved.')
+      toast.success(successMessage)
     } catch (err) {
       setError(getErrorMessage(err))
     } finally {
@@ -71,7 +81,7 @@ export default function PreferencesForm({ profile, onSaved }) {
   }
 
   return (
-    <Card title="Your preferences">
+    <Card title={title}>
       <form onSubmit={handleSubmit} noValidate className="space-y-6">
         <div>
           <p className="mb-2 text-sm font-medium text-slate-700">Risk preference</p>
@@ -139,12 +149,17 @@ export default function PreferencesForm({ profile, onSaved }) {
         {error && <ErrorBanner message={error} />}
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs text-slate-500">
-            Changes take effect the next time the system classifies you, for example on your next analysis.
-          </p>
-          <Button type="submit" icon={Save} loading={saving}>
-            Save preferences
-          </Button>
+          <p className="text-xs text-slate-500">{note}</p>
+          <div className="flex items-center gap-2">
+            {onSkip && (
+              <Button variant="ghost" onClick={onSkip} disabled={saving}>
+                Skip for now
+              </Button>
+            )}
+            <Button type="submit" icon={Save} loading={saving}>
+              {submitLabel}
+            </Button>
+          </div>
         </div>
       </form>
     </Card>

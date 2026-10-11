@@ -1,4 +1,17 @@
-import { Bot, ChevronRight, CloudOff, Crosshair, Globe, RotateCcw, ShieldAlert, ShieldCheck, ShieldX } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import {
+  Bot,
+  ChevronRight,
+  CloudOff,
+  Crosshair,
+  Globe,
+  PanelRightOpen,
+  RotateCcw,
+  Scale,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldX,
+} from 'lucide-react'
 import Markdown from './Markdown'
 import { formatDateTime } from '../../utils/format'
 
@@ -42,6 +55,13 @@ function ModeBadge({ meta }) {
       </Badge>
     )
   }
+  if (meta.mode === 'advice') {
+    return (
+      <Badge icon={Scale} className="bg-violet-50 text-violet-700 ring-violet-200" title="Verdict from the five-agent analysis">
+        Advice{meta.detected_symbols.length ? ` · ${meta.detected_symbols.join(', ')}` : ''}
+      </Badge>
+    )
+  }
   if (meta.mode === 'symbol') {
     return (
       <Badge icon={Crosshair} className="bg-indigo-50 text-indigo-700 ring-indigo-200" title="Answered with your data for this stock">
@@ -51,7 +71,7 @@ function ModeBadge({ meta }) {
   }
   if (meta.mode === 'general') {
     return (
-      <Badge icon={Globe} className="bg-slate-100 text-slate-600 ring-slate-200" title="No held stock was named">
+      <Badge icon={Globe} className="bg-slate-100 text-slate-600 ring-slate-200" title="No stock was named">
         General
       </Badge>
     )
@@ -81,14 +101,16 @@ function UsedPanel({ meta }) {
       <div className="space-y-3 border-t border-slate-200 px-3 py-3">
         <div>
           <p className="mb-1 font-semibold text-slate-700">Mode</p>
-          {meta.mode === 'symbol' ? (
-            <p>Symbol mode: stock-specific lookups for the holdings you named.</p>
-          ) : (
+          {meta.mode === 'advice' && (
+            <p>Advice mode: a verdict from the five-agent analysis, sized to the amount and horizon you gave.</p>
+          )}
+          {meta.mode === 'symbol' && <p>Symbol mode: stock-specific lookups for the stocks you named.</p>}
+          {meta.mode === 'general' && (
             <p>General mode: your overall profile and holdings overview, no stock-specific lookups.</p>
           )}
         </div>
         <div>
-          <p className="mb-1 font-semibold text-slate-700">Held stocks detected</p>
+          <p className="mb-1 font-semibold text-slate-700">Stocks detected</p>
           {symbols.length ? (
             <div className="flex flex-wrap gap-1">
               {symbols.map((symbol) => (
@@ -246,6 +268,15 @@ export default function MessageBubble({ message, retryDisabled, onRetry }) {
       </div>
       <div className="min-w-0 max-w-[85%] flex-1">
         <AssistantBody message={message} retryDisabled={retryDisabled} onRetry={onRetry} />
+        {meta?.recommendation_id && !refused && (
+          <Link
+            to={`/insights?review=${meta.recommendation_id}`}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-50"
+          >
+            <PanelRightOpen size={14} />
+            View full analysis
+          </Link>
+        )}
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           {!refused && <ModeBadge meta={meta} />}
           <ShieldBadge verdict={verdict} reason={meta?.security?.reason} />

@@ -49,9 +49,11 @@ SIGNUPS_PER_IP = SlidingWindowLimiter(limit=10, window_seconds=60 * 60)
 # POST /security/scan-text: each flagged text costs an LLM call. (The chat route counts its
 # stored messages in the DB instead; scan-text stores nothing, so it uses this in-memory window.)
 SCAN_TEXT_PER_USER = SlidingWindowLimiter(limit=10, window_seconds=60)
+CHAT_ANALYSES_PER_USER = SlidingWindowLimiter(limit=10, window_seconds=60 * 60)
 
 
 def reset_all() -> None:
     """Forget every counter (tests)."""
-    for limiter in (LOGIN_FAILURES_PER_EMAIL, LOGIN_FAILURES_PER_IP, SIGNUPS_PER_IP, SCAN_TEXT_PER_USER):
+    for limiter in (LOGIN_FAILURES_PER_EMAIL, LOGIN_FAILURES_PER_IP, SIGNUPS_PER_IP, SCAN_TEXT_PER_USER,
+                    CHAT_ANALYSES_PER_USER):
         limiter.clear()

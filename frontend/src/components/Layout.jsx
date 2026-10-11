@@ -7,14 +7,18 @@ import {
   Lightbulb,
   LogOut,
   MessageSquare,
+  Moon,
   Newspaper,
   Server,
   ShieldCheck,
   Sparkles,
+  Sun,
   TrendingUp,
   User,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import { useTheme } from '../context/ThemeContext'
+import { isSuperAdmin } from '../utils/admin'
 import Disclaimer from './Disclaimer'
 import NotificationBell from './NotificationBell'
 
@@ -25,8 +29,8 @@ const NAV_ITEMS = [
   { to: '/news', label: 'Market News', icon: Newspaper },
   { to: '/assistant', label: 'AI Assistant', icon: MessageSquare },
   { to: '/opportunities', label: 'Opportunities', icon: Sparkles },
-  { to: '/security', label: 'Security Center', icon: ShieldCheck },
-  { to: '/system', label: 'System Check', icon: Server },
+  { to: '/security', label: 'Security Center', icon: ShieldCheck, adminOnly: true },
+  { to: '/system', label: 'System Check', icon: Server, adminOnly: true },
   { to: '/profile', label: 'Profile', icon: User },
 ]
 
@@ -42,6 +46,34 @@ function navClass({ isActive }) {
 function pageTitle(pathname) {
   const match = NAV_ITEMS.find((item) => item.to === pathname)
   return match ? match.label : EXTRA_TITLES[pathname] || 'Investment Copilot'
+}
+
+function ThemeToggle() {
+  const { isDark, toggleTheme } = useTheme()
+  const label = isDark ? 'Light mode' : 'Dark mode'
+  const Icon = isDark ? Sun : Moon
+  return (
+    <button
+      type="button"
+      onClick={toggleTheme}
+      aria-pressed={isDark}
+      aria-label={`Switch to ${label.toLowerCase()}`}
+      title={`Switch to ${label.toLowerCase()}`}
+      className="flex w-full items-center justify-center gap-3 rounded-xl px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 lg:justify-between"
+    >
+      <span className="flex items-center gap-3">
+        <Icon size={18} className="shrink-0" />
+        <span className="hidden lg:inline">{label}</span>
+      </span>
+      <span
+        className={`relative hidden h-5 w-9 shrink-0 rounded-full transition-colors lg:inline-flex ${isDark ? 'bg-indigo-600' : 'bg-slate-300'}`}
+      >
+        <span
+          className={`absolute top-0.5 h-4 w-4 rounded-full bg-[#fff] shadow transition-all ${isDark ? 'left-4' : 'left-0.5'}`}
+        />
+      </span>
+    </button>
+  )
 }
 
 function UserMenu() {
@@ -102,6 +134,8 @@ function UserMenu() {
 
 export default function Layout() {
   const { pathname } = useLocation()
+  const { user } = useAuth()
+  const navItems = NAV_ITEMS.filter((item) => !item.adminOnly || isSuperAdmin(user))
 
   return (
     <div className="flex min-h-screen">
@@ -114,13 +148,17 @@ export default function Layout() {
         </div>
 
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto">
-          {NAV_ITEMS.map(({ to, label, icon: Icon, end }) => (
+          {navItems.map(({ to, label, icon: Icon, end }) => (
             <NavLink key={to} to={to} end={end} className={navClass} title={label}>
               <Icon size={18} className="shrink-0" />
               <span className="hidden lg:inline">{label}</span>
             </NavLink>
           ))}
         </nav>
+
+        <div className="mt-3 border-t border-slate-200 pt-3">
+          <ThemeToggle />
+        </div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">

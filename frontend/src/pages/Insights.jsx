@@ -10,6 +10,7 @@ import PageHeader from '../components/PageHeader'
 import ExplainPanel from './insights/ExplainPanel'
 import HistoryList from './insights/HistoryList'
 import ResultCard from './insights/ResultCard'
+import ReviewDrawer from './insights/ReviewDrawer'
 import { SYMBOL_PATTERN } from './insights/helpers'
 
 const LOADING_TEXT = 'Running 5 AI agents and the confidence module (can take up to 30 seconds)'
@@ -35,6 +36,7 @@ export default function Insights() {
   const [cooldownUntil, setCooldownUntil] = useState(0)
   const [now, setNow] = useState(() => Date.now())
   const [historyKey, setHistoryKey] = useState(0)
+  const [reviewId, setReviewId] = useState(() => Number(params.get('review')) || null)
   const autoRan = useRef(null)
 
   const secondsLeft = Math.max(0, Math.ceil((cooldownUntil - now) / 1000))
@@ -107,6 +109,27 @@ export default function Insights() {
     }
   }
 
+  const closeReview = useCallback(() => {
+    setReviewId(null)
+    setParams(
+      (current) => {
+        if (!current.has('review')) return current
+        const next = new URLSearchParams(current)
+        next.delete('review')
+        return next
+      },
+      { replace: true },
+    )
+  }, [setParams])
+
+  function showReviewed(data) {
+    setResult(data)
+    setOrigin('saved')
+    setInput(data.symbol)
+    setError('')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   const disabled = running || secondsLeft > 0 || !input.trim()
 
   return (
@@ -168,7 +191,16 @@ export default function Insights() {
         </Card>
       )}
 
-      <HistoryList refreshKey={historyKey} activeId={result?.id} onOpen={openSaved} openingId={openingId} />
+      <HistoryList
+        refreshKey={historyKey}
+        activeId={result?.id}
+        onOpen={openSaved}
+        openingId={openingId}
+        onReview={setReviewId}
+        reviewId={reviewId}
+      />
+
+      {reviewId !== null && <ReviewDrawer id={reviewId} onClose={closeReview} onShowOnPage={showReviewed} />}
     </div>
   )
 }

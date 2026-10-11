@@ -229,5 +229,5 @@ def test_assistant_can_read_context_but_write_nothing():
     from app.models import Base
 
     assert not any(check_permission("assistant", "write", t) for t in Base.metadata.tables)
-    for method in ("_profile", "_holdings", "_company_names", "_latest_recommendation", "_news"):
+    for method in ("_profile", "_holdings", "_company_names", "_known_names", "_latest_recommendation", "_news"):
         assert hasattr(getattr(assistant_module.AssistantAgent, method), "__wrapped__")

@@ -54,10 +54,10 @@ function TimingsChart({ timings }) {
   )
 }
 
-function ConfidenceStrip({ agreement, confidence, thresholds }) {
+export function ConfidenceStrip({ agreement, confidence, thresholds, title = 'How confidence is computed' }) {
   return (
     <div className="rounded-xl bg-slate-50 p-4">
-      <h3 className="mb-3 text-sm font-semibold text-slate-900">How confidence is computed</h3>
+      {title && <h3 className="mb-3 text-sm font-semibold text-slate-900">{title}</h3>}
       <div className="flex flex-wrap items-center gap-3 text-sm">
         <div className="rounded-xl bg-white px-4 py-2 ring-1 ring-slate-200">
           <p className="text-xs text-slate-500">Agreement</p>

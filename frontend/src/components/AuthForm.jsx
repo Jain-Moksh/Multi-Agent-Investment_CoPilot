@@ -65,7 +65,7 @@ export default function AuthForm({ mode }) {
     try {
       if (isLogin) await login(values.email.trim(), values.password)
       else await signup(values.email.trim(), values.password)
-      navigate(isLogin ? nextPath : '/', { replace: true })
+      navigate(isLogin ? nextPath : '/welcome', { replace: true })
     } catch (err) {
       setError(getErrorMessage(err))
     } finally {

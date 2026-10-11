@@ -150,13 +150,27 @@ async def test_untagged_but_relevant_news_is_kept_and_labelled(pg_client, pg_ses
     assert ", not tagged to this stock)" in fake.assistant_calls[0]["user"]
 
 
-async def test_not_held_stock_gets_general_mode(pg_client, pg_sessionmaker, chroma, fake_model, monkeypatch):
+async def test_buy_question_about_a_not_held_stock_asks_for_the_plan_first(pg_client, pg_sessionmaker, chroma,
+                                                                         fake_model, monkeypatch):
     headers = await signup_headers(pg_client)
     await seed(pg_sessionmaker)
     fake = FakeLLM()
     monkeypatch.setattr(llm, "complete", fake)
     body = (await send(pg_client, headers, "Should I buy Wipro?")).json()
-    assert body["mode"] == "general" and "STOCK:" not in fake.assistant_calls[0]["user"]
+    assert body["mode"] == "advice" and body["detected_symbols"] == ["WIPRO.NS"]
+    assert body["reply"].startswith("Happy to give you a clear call on Wipro (WIPRO.NS)")
+    assert fake.assistant_calls == []
+
+
+async def test_not_held_stock_without_a_trade_question_gets_symbol_mode(pg_client, pg_sessionmaker, chroma,
+                                                                        fake_model, monkeypatch):
+    headers = await signup_headers(pg_client)
+    await seed(pg_sessionmaker)
+    fake = FakeLLM()
+    monkeypatch.setattr(llm, "complete", fake)
+    body = (await send(pg_client, headers, "What is happening with Wipro lately?")).json()
+    assert body["mode"] == "symbol" and body["detected_symbols"] == ["WIPRO.NS"]
+    assert "STOCK: WIPRO.NS" in fake.assistant_calls[0]["user"]
 
 
 async def test_suspicious_message_about_held_stock_gets_no_extra_lookups(pg_client, pg_sessionmaker, chroma,

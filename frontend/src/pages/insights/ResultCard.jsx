@@ -10,7 +10,7 @@ const BIG_BADGE = {
   sell: 'bg-red-600 text-white',
 }
 
-function ConfidenceRing({ value, level }) {
+export function ConfidenceRing({ value, level }) {
   const percent = Math.round(Math.max(0, Math.min(1, Number(value) || 0)) * 100)
   const radius = 42
   const circumference = 2 * Math.PI * radius
@@ -18,7 +18,7 @@ function ConfidenceRing({ value, level }) {
   return (
     <div className="flex flex-col items-center">
       <svg width="110" height="110" viewBox="0 0 110 110" role="img" aria-label={`Confidence ${percent}%`}>
-        <circle cx="55" cy="55" r={radius} fill="none" stroke="#e2e8f0" strokeWidth="10" />
+        <circle cx="55" cy="55" r={radius} fill="none" className="stroke-slate-200" strokeWidth="10" />
         <circle
           cx="55"
           cy="55"
@@ -30,7 +30,7 @@ function ConfidenceRing({ value, level }) {
           strokeDasharray={`${(percent / 100) * circumference} ${circumference}`}
           transform="rotate(-90 55 55)"
         />
-        <text x="55" y="60" textAnchor="middle" fontSize="22" fontWeight="600" fill="#0f172a">
+        <text x="55" y="60" textAnchor="middle" fontSize="22" fontWeight="600" className="fill-slate-900">
           {percent}%
         </text>
       </svg>
@@ -43,7 +43,7 @@ function position(value) {
   return `${((Math.max(-1, Math.min(1, value)) + 1) / 2) * 100}%`
 }
 
-function LeanGauge({ lean, thresholds }) {
+export function LeanGauge({ lean, thresholds }) {
   const sell = thresholds?.sell ?? -0.3
   const buy = thresholds?.buy ?? 0.3
   const value = Number(lean) || 0

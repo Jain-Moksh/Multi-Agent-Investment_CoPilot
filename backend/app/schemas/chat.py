@@ -26,12 +26,13 @@ class ChatReply(BaseModel):
     conversation_id: str
     reply: str
     status: str                     # ok | refused | refused_unverified | llm_unavailable | blocked_output
-    mode: str                       # symbol | general | refused
-    detected_symbols: list[str]     # held stocks recognised in the message
+    mode: str                       # advice | symbol | general | refused
+    detected_symbols: list[str]     # stocks recognised in the message
     security: ChatSecurity
     user_message_id: int
     assistant_message_id: int
     sources: list[ChatSource]
+    recommendation_id: int | None = None
 
 
 class ConversationSummary(BaseModel):

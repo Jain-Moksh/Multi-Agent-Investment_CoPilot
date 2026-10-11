@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { History } from 'lucide-react'
+import { History, PanelRightOpen } from 'lucide-react'
 import { getErrorMessage } from '../../api/client'
 import { listRecommendations } from '../../api/recommendations'
 import Card from '../../components/Card'
@@ -12,7 +12,7 @@ import { formatDateTime } from '../../utils/format'
 
 const FILTERS = ['All', 'Buy', 'Hold', 'Sell', 'Avoid']
 
-export default function HistoryList({ refreshKey, activeId, onOpen, openingId }) {
+export default function HistoryList({ refreshKey, activeId, onOpen, openingId, onReview, reviewId }) {
   const [items, setItems] = useState(null)
   const [error, setError] = useState('')
   const [filter, setFilter] = useState('All')
@@ -69,19 +69,31 @@ export default function HistoryList({ refreshKey, activeId, onOpen, openingId })
       {!error && visible.length > 0 && (
         <ul className="divide-y divide-slate-100">
           {visible.map((item) => (
-            <li key={item.id}>
+            <li
+              key={item.id}
+              className={`flex flex-wrap items-center gap-3 rounded-xl px-3 py-2 transition hover:bg-slate-50 ${
+                activeId === item.id || reviewId === item.id ? 'bg-indigo-50 hover:bg-indigo-50' : ''
+              }`}
+            >
               <button
                 type="button"
                 onClick={() => onOpen(item.id)}
                 disabled={openingId === item.id}
-                className={`flex w-full flex-wrap items-center gap-x-4 gap-y-2 rounded-xl px-3 py-3 text-left hover:bg-slate-50 disabled:opacity-60 ${
-                  activeId === item.id ? 'bg-indigo-50' : ''
-                }`}
+                title="Show this analysis on the page"
+                className="flex w-full min-w-0 flex-wrap items-center gap-x-4 gap-y-2 py-1 text-left disabled:opacity-60 sm:w-auto sm:flex-1"
               >
                 <span className="font-medium text-slate-900 sm:w-32 sm:shrink-0">{item.symbol}</span>
                 <DecisionBadge decision={item.decision} label={item.decision_label} />
                 <ConfidenceBar value={item.confidence} />
                 <span className="text-xs text-slate-500 sm:ml-auto">{formatDateTime(item.created_at)}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onReview(item.id)}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
+              >
+                <PanelRightOpen size={14} />
+                Detail review
               </button>
             </li>
           ))}

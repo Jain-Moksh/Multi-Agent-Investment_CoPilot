@@ -102,6 +102,49 @@ export function explanationSourceLabel(source) {
   return '-'
 }
 
+export function percentText(value) {
+  return value === null || value === undefined || Number.isNaN(Number(value)) ? '-' : `${Math.round(Number(value) * 100)}%`
+}
+
+export function decisionRule(result) {
+  const thresholds = result.details?.thresholds
+  if (!thresholds) return null
+  const lean = Number(result.overall_lean) || 0
+  const confidence = Number(result.confidence) || 0
+  const label = result.decision_label || result.decision || '-'
+  const confident = confidence >= thresholds.min_confidence
+  const aboveBuy = lean > thresholds.buy
+  const belowSell = lean < thresholds.sell
+  const checks = [
+    {
+      met: confident,
+      title: 'Enough confidence',
+      text: `Confidence ${percentText(confidence)} ${confident ? 'meets' : 'is below'} the ${percentText(thresholds.min_confidence)} minimum.`,
+    },
+    {
+      met: aboveBuy,
+      title: 'Bullish enough for Buy',
+      text: `Lean ${signed(lean)} is ${aboveBuy ? 'above' : 'not above'} the Buy line ${signed(thresholds.buy)}.`,
+    },
+    {
+      met: belowSell,
+      title: 'Bearish enough for Sell',
+      text: `Lean ${signed(lean)} is ${belowSell ? 'below' : 'not below'} the Sell line ${signed(thresholds.sell)}.`,
+    },
+  ]
+  let conclusion
+  if (confident && aboveBuy) conclusion = 'Both Buy conditions are met, so the decision is Buy.'
+  else if (confident && belowSell) {
+    conclusion = `Both Sell conditions are met, so the decision is ${label}.`
+    if (label === 'Avoid') conclusion += ' You do not hold this stock, so Sell is shown as Avoid.'
+  } else if (aboveBuy || belowSell) {
+    conclusion = `The lean points ${aboveBuy ? 'towards Buy' : 'towards Sell'}, but confidence is too low to act on it, so the decision is Hold.`
+  } else {
+    conclusion = 'The lean sits inside the neutral band between the Sell and Buy lines, so the decision is Hold.'
+  }
+  return { checks, conclusion }
+}
+
 export function signed(value, digits = 2) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '-'
   const number = Number(value)

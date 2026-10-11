@@ -11,6 +11,7 @@ const MAX_LENGTH = 2000
 
 const SUGGESTIONS = [
   'Should I buy Tata Motors?',
+  'I want to invest ₹50,000 in Infosys for the long term',
   'Why is my portfolio down today?',
   'Which sectors look promising?',
   "Explain today's market news",
@@ -145,6 +146,7 @@ export default function Assistant() {
             detected_symbols: data.detected_symbols || [],
             security: data.security,
             sources: data.sources || [],
+            recommendation_id: data.recommendation_id ?? null,
           },
         },
       ])

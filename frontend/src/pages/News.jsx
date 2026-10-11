@@ -231,7 +231,7 @@ export default function News() {
                 className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition ${portfolioOnly ? 'bg-indigo-600' : 'bg-slate-300'}`}
               >
                 <span
-                  className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${portfolioOnly ? 'left-4' : 'left-0.5'}`}
+                  className={`absolute top-0.5 h-4 w-4 rounded-full bg-[#fff] shadow transition ${portfolioOnly ? 'left-4' : 'left-0.5'}`}
                 />
               </span>
               <span className="text-left xl:whitespace-nowrap">Only news affecting my portfolio</span>

@@ -27,7 +27,10 @@ Per message:
                    the assistant LLM (fail closed)
      SAFE       -> answered
   3. answer with the AssistantAgent (history = last messages, BLOCKED ones excluded):
-       SAFE + mentions a held stock -> symbol mode: news + latest recommendation +
+       SAFE + asks to buy/sell/hold -> advice mode: one clarifying question if the amount or
+                                       horizon is missing, then a sized verdict from the
+                                       five-agent recommendation (recommendation_id returned)
+       SAFE + mentions a stock      -> symbol mode: news + latest recommendation +
                                        Portfolio Agent analysis for that stock
        otherwise                    -> general mode: overall profile + holdings overview
        (SUSPICIOUS always gets general mode: no extra lookups for a possibly hostile prompt)
@@ -186,6 +189,7 @@ async def send_message(
         user_message_id=user_msg.id,
         assistant_message_id=assistant_msg.id,
         sources=sources,
+        recommendation_id=answer.get("recommendation_id"),
     )
 
 
